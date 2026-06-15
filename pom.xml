@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- ============================================================= -->
+    <!--  Project coordinates                                          -->
+    <!--  These three lines just give your project a unique name.      -->
+    <!-- ============================================================= -->
+    <groupId>kz.kase</groupId>
+    <artifactId>kase-fix-client</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>KASE FIX Client</name>
+    <description>A simple QuickFIX/J based FIX client for the Kazakhstan Stock Exchange (KASE).
+        Supports Logon, New Order, Cancel Order and Logout.</description>
+
+    <!-- ============================================================= -->
+    <!--  Global settings                                              -->
+    <!--  - We compile for Java 21 (your locally installed version).   -->
+    <!--  - We pin every dependency version here so the build is        -->
+    <!--    100% reproducible.                                          -->
+    <!-- ============================================================= -->
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- Dependency versions (kept in one place so they are easy to bump) -->
+        <quickfixj.version>3.0.1</quickfixj.version>
+        <slf4j.version>2.0.16</slf4j.version>
+        <logback.version>1.5.18</logback.version>
+
+        <!-- The class that contains the public static void main(...) method -->
+        <main.class>kz.kase.fixclient.KaseFixClient</main.class>
+    </properties>
+
+    <dependencies>
+        <!-- =========================================================== -->
+        <!--  QuickFIX/J engine.                                          -->
+        <!--  This is the actual FIX protocol engine: it manages the      -->
+        <!--  TCP connection, the FIX session, sequence numbers,          -->
+        <!--  heartbeats, logon/logout, resend requests, etc.            -->
+        <!-- =========================================================== -->
+        <dependency>
+            <groupId>org.quickfixj</groupId>
+            <artifactId>quickfixj-core</artifactId>
+            <version>${quickfixj.version}</version>
+        </dependency>
+
+        <!-- =========================================================== -->
+        <!--  QuickFIX/J generated message classes for FIX 4.4.           -->
+        <!--  These give us ready-made Java classes like                  -->
+        <!--  NewOrderSingle, OrderCancelRequest, ExecutionReport, etc.  -->
+        <!--                                                              -->
+        <!--  >>> SUBSTITUTE IF NEEDED <<<                                -->
+        <!--  KASE's order-entry gateway uses FIX 4.4 in this template.   -->
+        <!--  If KASE tells you to use a different version, swap this      -->
+        <!--  artifact (e.g. quickfixj-messages-fix42 / fix50sp2) AND      -->
+        <!--  change "BeginString" in config/kase-fix-client.cfg.        -->
+        <!-- =========================================================== -->
+        <dependency>
+            <groupId>org.quickfixj</groupId>
+            <artifactId>quickfixj-messages-fix44</artifactId>
+            <version>${quickfixj.version}</version>
+        </dependency>
+
+        <!-- =========================================================== -->
+        <!--  Logging: SLF4J is the logging API, Logback is the engine    -->
+        <!--  that actually writes the logs to the console and to files.  -->
+        <!-- =========================================================== -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>${logback.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>kase-fix-client</finalName>
+        <plugins>
+            <!-- ======================================================= -->
+            <!--  Compiler plugin: compiles our Java 21 source code.      -->
+            <!-- ======================================================= -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
+
+            <!-- ======================================================= -->
+            <!--  Shade plugin: bundles our code + ALL dependencies into  -->
+            <!--  ONE runnable "fat" jar (target/kase-fix-client.jar).    -->
+            <!--  This is what lets you start the app with a single        -->
+            <!--  `java -jar` command.                                     -->
+            <!-- ======================================================= -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <transformers>
+                                <!-- Tell the jar which class to run on start -->
+                                <transformer
+                                    implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>${main.class}</mainClass>
+                                </transformer>
+                                <!-- Merge service files so SLF4J/Logback work inside the fat jar -->
+                                <transformer
+                                    implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <!-- Avoid signature clashes when merging jars -->
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- ======================================================= -->
+            <!--  Exec plugin: lets you run the app straight from Maven   -->
+            <!--  during development with `mvn exec:java`.                 -->
+            <!-- ======================================================= -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <mainClass>${main.class}</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

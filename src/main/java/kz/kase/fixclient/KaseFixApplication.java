@@ -1,0 +1,305 @@
+package kz.kase.fixclient;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import quickfix.Application;
+import quickfix.DoNotSend;
+import quickfix.FieldNotFound;
+import quickfix.IncorrectDataFormat;
+import quickfix.IncorrectTagValue;
+import quickfix.Message;
+import quickfix.RejectLogon;
+import quickfix.Session;
+import quickfix.SessionID;
+import quickfix.SessionNotFound;
+import quickfix.UnsupportedMessageType;
+import quickfix.field.Account;
+import quickfix.field.AvgPx;
+import quickfix.field.CumQty;
+import quickfix.field.CxlRejReason;
+import quickfix.field.ExecType;
+import quickfix.field.LastPx;
+import quickfix.field.LastQty;
+import quickfix.field.LeavesQty;
+import quickfix.field.MsgType;
+import quickfix.field.OrdStatus;
+import quickfix.field.OrderID;
+import quickfix.field.Password;
+import quickfix.field.Text;
+import quickfix.field.Username;
+
+/**
+ * KaseFixApplication
+ * ------------------
+ * This class is the "heart" of the client. QuickFIX/J calls the methods in
+ * this class automatically as things happen on the FIX connection.
+ *
+ * Think of it as a set of event handlers. You never call these methods
+ * yourself - the FIX engine calls them for you:
+ *
+ *   onCreate   -> a session object was created (app starting up)
+ *   onLogon    -> we successfully logged in to the server
+ *   onLogout   -> we logged out / got disconnected
+ *   toAdmin    -> the engine is about to SEND an admin message (Logon, Heartbeat...)
+ *   fromAdmin  -> we RECEIVED an admin message from the server
+ *   toApp      -> the engine is about to SEND a business message (our orders)
+ *   fromApp    -> we RECEIVED a business message (e.g. ExecutionReport)
+ *
+ * Every method here logs what is happening so you can follow the whole
+ * conversation in the console and in logs/kase-fix-client.log.
+ */
+public class KaseFixApplication implements Application {
+
+    private static final Logger log = LoggerFactory.getLogger(KaseFixApplication.class);
+
+    /**
+     * The session id of the live connection. It is set when we log on and
+     * cleared when we log out. Other parts of the program read this to know
+     * whether we are currently connected, and where to send messages.
+     *
+     * Marked "volatile" because it is written by the FIX engine threads and
+     * read by the main (menu) thread.
+     */
+    private volatile SessionID activeSessionId;
+
+    /** @return the currently logged-on session, or null if not connected. */
+    public SessionID getActiveSessionId() {
+        return activeSessionId;
+    }
+
+    /** @return true if we are currently logged on to KASE. */
+    public boolean isLoggedOn() {
+        return activeSessionId != null;
+    }
+
+    // =====================================================================
+    //  SESSION LIFECYCLE EVENTS
+    // =====================================================================
+
+    /**
+     * Called once, very early, when QuickFIX/J creates the session object.
+     * The connection is NOT established yet at this point.
+     */
+    @Override
+    public void onCreate(SessionID sessionId) {
+        log.info("Session created (not yet logged on): {}", sessionId);
+    }
+
+    /**
+     * Called when we have SUCCESSFULLY logged on to the FIX server.
+     * After this point we are allowed to send orders.
+     */
+    @Override
+    public void onLogon(SessionID sessionId) {
+        this.activeSessionId = sessionId;
+        log.info("==========================================================");
+        log.info(" LOGON SUCCESSFUL  ->  {}", sessionId);
+        log.info(" You can now place and cancel orders.");
+        log.info("==========================================================");
+    }
+
+    /**
+     * Called when the session logs out OR the TCP connection drops.
+     */
+    @Override
+    public void onLogout(SessionID sessionId) {
+        this.activeSessionId = null;
+        log.info("==========================================================");
+        log.info(" LOGGED OUT / DISCONNECTED  ->  {}", sessionId);
+        log.info("==========================================================");
+    }
+
+    // =====================================================================
+    //  ADMIN (SESSION-LEVEL) MESSAGES: Logon, Logout, Heartbeat, etc.
+    // =====================================================================
+
+    /**
+     * Called just before the engine SENDS an administrative message.
+     *
+     * This is where we attach our username and password to the outgoing
+     * Logon message. KASE (like most venues) authenticates using:
+     *   tag 553 = Username
+     *   tag 554 = Password
+     *
+     * The actual Username/Password values come from the .cfg file and are
+     * passed into this class via the constructor-less settings lookup in
+     * KaseFixClient (see how credentials are injected below).
+     */
+    @Override
+    public void toAdmin(Message message, SessionID sessionId) {
+        try {
+            String msgType = message.getHeader().getString(MsgType.FIELD);
+
+            // MsgType "A" == Logon. Only then do we add credentials.
+            if (MsgType.LOGON.equals(msgType)) {
+                if (logonUsername != null && !logonUsername.isBlank()) {
+                    message.setString(Username.FIELD, logonUsername);
+                }
+                if (logonPassword != null && !logonPassword.isBlank()) {
+                    message.setString(Password.FIELD, logonPassword);
+                }
+                log.info("Sending LOGON (credentials attached for user '{}').", logonUsername);
+            }
+        } catch (FieldNotFound e) {
+            log.warn("Could not read MsgType while preparing admin message.", e);
+        }
+        log.debug("--> ADMIN OUT: {}", prettyFix(message));
+    }
+
+    /**
+     * Called when we RECEIVE an administrative message (Logon ack, Logout,
+     * Heartbeat, Reject, etc.). We mostly just log these.
+     */
+    @Override
+    public void fromAdmin(Message message, SessionID sessionId)
+            throws FieldNotFound, IncorrectDataFormat, IncorrectTagValue, RejectLogon {
+        log.debug("<-- ADMIN IN : {}", prettyFix(message));
+
+        // If the server sends us a Logout with a reason (Text, tag 58),
+        // surface it clearly - it usually explains WHY a logon was refused.
+        try {
+            String msgType = message.getHeader().getString(MsgType.FIELD);
+            if (MsgType.LOGOUT.equals(msgType) && message.isSetField(Text.FIELD)) {
+                log.warn("Server LOGOUT reason: {}", message.getString(Text.FIELD));
+            }
+        } catch (FieldNotFound ignored) {
+            // No text field present - nothing to report.
+        }
+    }
+
+    // =====================================================================
+    //  APPLICATION (BUSINESS) MESSAGES: our orders + server responses
+    // =====================================================================
+
+    /**
+     * Called just before the engine SENDS one of our business messages
+     * (e.g. a NewOrderSingle or OrderCancelRequest). Good place to log it.
+     */
+    @Override
+    public void toApp(Message message, SessionID sessionId) throws DoNotSend {
+        log.info("--> APP OUT  : {}", prettyFix(message));
+    }
+
+    /**
+     * Called when we RECEIVE a business message from KASE. This is the most
+     * important callback for trading: it is where ExecutionReports (order
+     * accepted / filled / cancelled) and OrderCancelRejects arrive.
+     */
+    @Override
+    public void fromApp(Message message, SessionID sessionId)
+            throws FieldNotFound, IncorrectDataFormat, IncorrectTagValue, UnsupportedMessageType {
+        log.info("<-- APP IN   : {}", prettyFix(message));
+
+        String msgType = message.getHeader().getString(MsgType.FIELD);
+        switch (msgType) {
+            case MsgType.EXECUTION_REPORT -> handleExecutionReport(message);
+            case MsgType.ORDER_CANCEL_REJECT -> handleCancelReject(message);
+            default -> log.info("Received business message of type '{}' (no special handling).", msgType);
+        }
+    }
+
+    /**
+     * Nicely explain an ExecutionReport in plain language so it is easy to
+     * understand what the exchange just told us about our order.
+     */
+    private void handleExecutionReport(Message m) throws FieldNotFound {
+        String orderId   = m.isSetField(OrderID.FIELD)  ? m.getString(OrderID.FIELD)  : "(none)";
+        char   ordStatus = m.isSetField(OrdStatus.FIELD) ? m.getChar(OrdStatus.FIELD)  : ' ';
+        char   execType  = m.isSetField(ExecType.FIELD)  ? m.getChar(ExecType.FIELD)   : ' ';
+
+        log.info("EXECUTION REPORT  | ExchangeOrderID={} | status={} | execType={}",
+                orderId, describeOrdStatus(ordStatus), describeExecType(execType));
+
+        if (m.isSetField(LastPx.FIELD) && m.isSetField(LastQty.FIELD)) {
+            log.info("   Last fill: qty={} @ price={}",
+                    m.getString(LastQty.FIELD), m.getString(LastPx.FIELD));
+        }
+        if (m.isSetField(CumQty.FIELD) && m.isSetField(LeavesQty.FIELD)) {
+            log.info("   Filled so far={}, remaining={}, avgPx={}",
+                    m.getString(CumQty.FIELD),
+                    m.getString(LeavesQty.FIELD),
+                    m.isSetField(AvgPx.FIELD) ? m.getString(AvgPx.FIELD) : "n/a");
+        }
+        if (m.isSetField(Account.FIELD)) {
+            log.info("   Account={}", m.getString(Account.FIELD));
+        }
+        if (m.isSetField(Text.FIELD)) {
+            log.info("   Text from exchange: {}", m.getString(Text.FIELD));
+        }
+    }
+
+    /** Explain why a cancel request was rejected. */
+    private void handleCancelReject(Message m) throws FieldNotFound {
+        log.warn("ORDER CANCEL REJECTED.");
+        if (m.isSetField(CxlRejReason.FIELD)) {
+            log.warn("   Reason code (tag 102) = {}", m.getInt(CxlRejReason.FIELD));
+        }
+        if (m.isSetField(Text.FIELD)) {
+            log.warn("   Text from exchange: {}", m.getString(Text.FIELD));
+        }
+    }
+
+    // =====================================================================
+    //  HELPERS
+    // =====================================================================
+
+    /** Login credentials, injected from the .cfg file by KaseFixClient. */
+    private String logonUsername;
+    private String logonPassword;
+
+    /** Called once at startup to give this app the credentials to send. */
+    public void setCredentials(String username, String password) {
+        this.logonUsername = username;
+        this.logonPassword = password;
+    }
+
+    /**
+     * Convenience method other classes can use to send a message on the
+     * currently active session. Returns true if it was handed to the engine.
+     */
+    public boolean send(Message message) {
+        if (activeSessionId == null) {
+            log.warn("Cannot send message - not logged on yet.");
+            return false;
+        }
+        try {
+            return Session.sendToTarget(message, activeSessionId);
+        } catch (SessionNotFound e) {
+            log.error("Failed to send message - session not found.", e);
+            return false;
+        }
+    }
+
+    /** Turns the FIX wire format (SOH-delimited) into a readable string for logs. */
+    private static String prettyFix(Message message) {
+        // The raw FIX string uses an invisible 0x01 byte between fields.
+        // Replace it with '|' so the log line is human readable.
+        return message.toString().replace('\u0001', '|');
+    }
+
+    private static String describeOrdStatus(char s) {
+        return switch (s) {
+            case OrdStatus.NEW -> "NEW (accepted)";
+            case OrdStatus.PARTIALLY_FILLED -> "PARTIALLY FILLED";
+            case OrdStatus.FILLED -> "FILLED";
+            case OrdStatus.CANCELED -> "CANCELLED";
+            case OrdStatus.REJECTED -> "REJECTED";
+            case OrdStatus.PENDING_NEW -> "PENDING NEW";
+            case OrdStatus.PENDING_CANCEL -> "PENDING CANCEL";
+            default -> "status '" + s + "'";
+        };
+    }
+
+    private static String describeExecType(char s) {
+        return switch (s) {
+            case ExecType.NEW -> "NEW";
+            case ExecType.TRADE -> "TRADE (fill)";
+            case ExecType.CANCELED -> "CANCELLED";
+            case ExecType.REJECTED -> "REJECTED";
+            case ExecType.PENDING_NEW -> "PENDING NEW";
+            case ExecType.PENDING_CANCEL -> "PENDING CANCEL";
+            default -> "execType '" + s + "'";
+        };
+    }
+}

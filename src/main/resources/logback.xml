@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ============================================================================
+   Logging configuration (Logback).
+
+   We send logs to TWO places at once:
+     1. The CONSOLE  -> so you can watch what happens live while the app runs.
+     2. A FILE       -> logs/kase-fix-client.log, so you can read it afterwards.
+
+   The log line format is:
+     HH:mm:ss.SSS  LEVEL  loggerName - the message
+  ============================================================================
+-->
+<configuration>
+
+    <!-- ===== 1) Console output ===== -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{20} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ===== 2) Rolling file output ===== -->
+    <!-- Writes to logs/kase-fix-client.log and starts a new file every day
+         (or when the current file passes 10MB), keeping 14 days of history. -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/kase-fix-client.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>logs/kase-fix-client.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>14</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- QuickFIX/J's own engine logs can be chatty; INFO is a good balance.
+         Set this to DEBUG if you want to see even more internal detail. -->
+    <logger name="quickfix" level="INFO"/>
+
+    <!-- Our own application code logs at DEBUG so you see everything we do. -->
+    <logger name="kz.kase.fixclient" level="DEBUG"/>
+
+    <!-- Everything else defaults to INFO. -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+</configuration>
