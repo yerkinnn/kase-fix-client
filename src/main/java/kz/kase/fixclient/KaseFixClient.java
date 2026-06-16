@@ -7,6 +7,8 @@ import java.util.Scanner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.quickfixj.CharsetSupport;
+
 import quickfix.DefaultMessageFactory;
 import quickfix.FileLogFactory;
 import quickfix.FileStoreFactory;
@@ -53,6 +55,12 @@ public class KaseFixClient {
 
         log.info("Starting KASE FIX client using config: {}", configPath);
 
+        // KASE sends human-readable string fields (e.g. Text/58) in Cyrillic
+        // Windows-1251. Tell QuickFIX/J to encode/decode all message strings
+        // with that charset so error texts are readable instead of mojibake.
+        CharsetSupport.setCharset("windows-1251");
+        log.info("FIX message charset set to '{}'.", CharsetSupport.getCharset());
+
         // -----------------------------------------------------------------
         // 1) Load the session settings from the .cfg file.
         // -----------------------------------------------------------------
@@ -84,6 +92,12 @@ public class KaseFixClient {
                 application, storeFactory, settings, logFactory, msgFactory);
 
         OrderManager orderManager = new OrderManager(application);
+        // Let the application link incoming ExecutionReports back to our orders.
+        application.setOrderManager(orderManager);
+
+        // Read optional order defaults (board + account) from the config so the
+        // menu can pre-fill them. These are convenience values only.
+        OrderDefaults orderDefaults = readOrderDefaults(settings, configuredSessionId);
 
         // Make sure we shut down cleanly if the process is killed (Ctrl+C).
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -101,7 +115,7 @@ public class KaseFixClient {
         // -----------------------------------------------------------------
         // 6) Run the interactive menu until the user chooses to exit.
         // -----------------------------------------------------------------
-        runMenu(application, orderManager, configuredSessionId);
+        runMenu(application, orderManager, configuredSessionId, orderDefaults);
 
         // -----------------------------------------------------------------
         // 7) Clean shutdown.
@@ -131,12 +145,29 @@ public class KaseFixClient {
         return sessionId;
     }
 
+    /**
+     * Small holder for the optional default order values (board + account) that
+     * can be set in the config file so you don't have to re-type them.
+     */
+    private record OrderDefaults(String board, String account) {
+    }
+
+    /** Reads DefaultTradingSessionID (board) and DefaultAccount from the config. */
+    private static OrderDefaults readOrderDefaults(SessionSettings settings, SessionID sessionId)
+            throws Exception {
+        String board = settings.isSetting(sessionId, "DefaultTradingSessionID")
+                ? settings.getString(sessionId, "DefaultTradingSessionID") : "";
+        String account = settings.isSetting(sessionId, "DefaultAccount")
+                ? settings.getString(sessionId, "DefaultAccount") : "";
+        return new OrderDefaults(board, account);
+    }
+
     // =====================================================================
     //  INTERACTIVE MENU
     // =====================================================================
 
     private static void runMenu(KaseFixApplication application, OrderManager orderManager,
-                                SessionID configuredSessionId) {
+                                SessionID configuredSessionId, OrderDefaults defaults) {
         // Scanner reads what you type in the terminal.
         Scanner in = new Scanner(System.in);
 
@@ -148,7 +179,7 @@ public class KaseFixClient {
             try {
                 switch (choice) {
                     case "1" -> showStatus(application, orderManager);
-                    case "2" -> doNewOrder(in, orderManager, application);
+                    case "2" -> doNewOrder(in, orderManager, application, defaults);
                     case "3" -> doCancel(in, orderManager, application);
                     case "4" -> listOrders(orderManager);
                     case "5" -> doLogout(application);
@@ -188,30 +219,59 @@ public class KaseFixClient {
     }
 
     /** Menu option 2: collect order details and send a NewOrderSingle. */
-    private static void doNewOrder(Scanner in, OrderManager orderManager, KaseFixApplication application) {
+    private static void doNewOrder(Scanner in, OrderManager orderManager,
+                                   KaseFixApplication application, OrderDefaults defaults) {
         if (!application.isLoggedOn()) {
             System.out.println(">> You are not logged on yet. Wait for LOGON or use option 6.");
             return;
         }
 
-        System.out.print("Symbol (e.g. KZAP): ");
+        System.out.print("Symbol / SECCODE (e.g. AIRA): ");
         String symbol = in.nextLine().trim();
+
+        // Board (TradingSessionID / SECBOARD) - mandatory for KASE. Offer the
+        // config default so the user can just press Enter.
+        String board = askWithDefault(in,
+                "Board / TradingSessionID (SECBOARD)", defaults.board());
+
+        // Account (tag 1) - mandatory for KASE.
+        String account = askWithDefault(in,
+                "Account (trading account, tag 1)", defaults.account());
 
         System.out.print("Side - type B for BUY or S for SELL: ");
         String sideInput = in.nextLine().trim().toUpperCase();
         boolean buy = !sideInput.startsWith("S");
 
-        System.out.print("Quantity: ");
+        System.out.print("Quantity (lots): ");
         BigDecimal qty = new BigDecimal(in.nextLine().trim());
 
         System.out.print("Limit price (leave EMPTY for a MARKET order): ");
         String priceInput = in.nextLine().trim();
         BigDecimal price = priceInput.isEmpty() ? null : new BigDecimal(priceInput);
 
-        String clOrdId = orderManager.sendNewOrder(symbol, buy, qty, price);
+        if (symbol.isEmpty() || board.isEmpty() || account.isEmpty()) {
+            System.out.println(">> Symbol, Board and Account are all REQUIRED by KASE. Aborting.");
+            return;
+        }
+
+        String clOrdId = orderManager.sendNewOrder(symbol, board, account, buy, qty, price);
         if (clOrdId != null) {
             System.out.println(">> Order sent. Remember this ClOrdID to cancel it later: " + clOrdId);
         }
+    }
+
+    /**
+     * Prompt the user, showing a default value (from config) in brackets.
+     * If the user just presses Enter, the default is used.
+     */
+    private static String askWithDefault(Scanner in, String label, String defaultValue) {
+        if (defaultValue != null && !defaultValue.isBlank()) {
+            System.out.print(label + " [" + defaultValue + "]: ");
+            String typed = in.nextLine().trim();
+            return typed.isEmpty() ? defaultValue : typed;
+        }
+        System.out.print(label + ": ");
+        return in.nextLine().trim();
     }
 
     /** Menu option 3: ask which order to cancel and send an OrderCancelRequest. */

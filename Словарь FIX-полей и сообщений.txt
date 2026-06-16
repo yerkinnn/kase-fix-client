@@ -1,0 +1,585 @@
+# Словарь FIX-полей и сообщений
+
+## MICEX FIX 4.4 (FIX44)
+
+Версия: 1.1.1
+Дата: 26.11.2009
+
+---
+
+# 1. Общая информация
+
+Данный документ содержит описание:
+
+* FIX-сообщений;
+* пользовательских и стандартных FIX-полей;
+* допустимых значений полей;
+* групп и блоков;
+* дополнительных MICEX/MOEX расширений.
+
+---
+
+# 2. Основные поля FIX
+
+| Tag  | Поле                 | Тип     | Описание                                       |
+| ---- | -------------------- | ------- | ---------------------------------------------- |
+| 35   | MsgType              | String  | Тип сообщения FIX                              |
+| 52   | SendingTime          | String  | Время отправки сообщения                       |
+| 122  | OrigSendingTime      | String  | Исходное время отправки                        |
+| 5979 | RequestTime          | String  | Время чтения запроса FIX-движком из TCP-сокета |
+| 1090 | MaxPriceLevels       | int     | Максимальное количество уровней цен            |
+| 5001 | SyncMessageSeqNum    | int     | Номер синхронизируемого сообщения              |
+| 5002 | SyncMessageDirection | int     | Направление сообщения                          |
+| 5003 | SyncMessageLength    | Length  | Длина сообщения                                |
+| 5004 | SyncMessageData      | data    | Данные сообщения                               |
+| 5005 | IsAdministrative     | Boolean | Административное сообщение                     |
+| 5006 | IsOriginal           | Boolean | Оригинальное сообщение                         |
+| 5007 | StorageId            | String  | Идентификатор хранилища                        |
+
+---
+
+# 3. Типы сообщений FIX (MsgType, Tag 35)
+
+| Значение | Сообщение                             |
+| -------- | ------------------------------------- |
+| 0        | Heartbeat                             |
+| 1        | Test Request                          |
+| 2        | Resend Request                        |
+| 3        | Reject                                |
+| 4        | Sequence Reset                        |
+| 5        | Logout                                |
+| 6        | Indication of Interest                |
+| 7        | Advertisement                         |
+| 8        | Execution Report                      |
+| 9        | Order Cancel Reject                   |
+| A        | Logon                                 |
+| B        | News                                  |
+| C        | Email                                 |
+| D        | New Order - Single                    |
+| E        | New Order - List                      |
+| F        | Order Cancel Request                  |
+| G        | Order Cancel/Replace Request          |
+| H        | Order Status Request                  |
+| J        | Allocation Instruction                |
+| K        | List Cancel Request                   |
+| L        | List Execute                          |
+| M        | List Status Request                   |
+| N        | List Status                           |
+| P        | Allocation Instruction Ack            |
+| Q        | Don't Know Trade                      |
+| R        | Quote Request                         |
+| S        | Quote                                 |
+| T        | Settlement Instructions               |
+| V        | Market Data Request                   |
+| W        | Market Data - Snapshot/Full Refresh   |
+| X        | Market Data - Incremental Refresh     |
+| Y        | Market Data Request Reject            |
+| Z        | Quote Cancel                          |
+| a        | Quote Status Request                  |
+| b        | Mass Quote Acknowledgement            |
+| c        | Security Definition Request           |
+| d        | Security Definition                   |
+| e        | Security Status Request               |
+| f        | Security Status                       |
+| g        | Trading Session Status Request        |
+| h        | Trading Session Status                |
+| i        | Mass Quote                            |
+| j        | Business Message Reject               |
+| k        | Bid Request                           |
+| l        | Bid Response                          |
+| m        | List Strike Price                     |
+| n        | XML message                           |
+| o        | Registration Instructions             |
+| p        | Registration Instructions Response    |
+| q        | Order Mass Cancel Request             |
+| r        | Order Mass Cancel Report              |
+| s        | New Order - Cross                     |
+| t        | Cross Order Cancel/Replace Request    |
+| u        | Cross Order Cancel Request            |
+| v        | Security Type Request                 |
+| w        | Security Types                        |
+| x        | Security List Request                 |
+| y        | Security List                         |
+| z        | Derivative Security List Request      |
+| AA       | Derivative Security List              |
+| AB       | New Order - Multileg                  |
+| AC       | Multileg Order Cancel/Replace Request |
+| AD       | Trade Capture Report Request          |
+| AE       | Trade Capture Report                  |
+| AF       | Order Mass Status Request             |
+| AG       | Quote Request Reject                  |
+| AH       | RFQ Request                           |
+| AI       | Quote Status Report                   |
+| AJ       | Quote Response                        |
+| AK       | Confirmation                          |
+| AL       | Position Maintenance Request          |
+| AM       | Position Maintenance Report           |
+| AN       | Request for Positions                 |
+| AO       | Request for Positions Ack             |
+| AP       | Position Report                       |
+| AQ       | Trade Capture Report Request Ack      |
+| AR       | Trade Capture Report Ack              |
+| AS       | Allocation Report                     |
+| AT       | Allocation Report Ack                 |
+| AU       | Confirmation Ack                      |
+| AV       | Settlement Instruction Request        |
+| AW       | Assignment Report                     |
+| AX       | Collateral Request                    |
+| AY       | Collateral Assignment                 |
+| AZ       | Collateral Response                   |
+| BA       | Collateral Report                     |
+| BB       | Collateral Inquiry                    |
+| BC       | Network Status Request                |
+| BD       | Network Status Response               |
+| BE       | User Request                          |
+| BF       | User Response                         |
+| BG       | Collateral Inquiry Ack                |
+| BH       | Confirmation Request                  |
+| US       | Message synchronization               |
+
+---
+
+# 4. SecurityType (Tag 167)
+
+| Значение  | Описание                                |
+| --------- | --------------------------------------- |
+| TREASURY  | Государственные облигации               |
+| PROVINCE  | Региональные облигации                  |
+| AGENCY    | Агентские бумаги                        |
+| MORTGAGE  | Ипотечные бумаги                        |
+| CP        | Commercial Paper                        |
+| CORP      | Корпоративные облигации                 |
+| EQUITY    | Акции                                   |
+| SUPRA     | Наднациональные бумаги                  |
+| CASH      | Денежные средства                       |
+| EUSUPRA   | Euro Supranational Coupons              |
+| FAC       | Federal Agency Coupon                   |
+| FADN      | Federal Agency Discount Note            |
+| PEF       | Private Export Funding                  |
+| CPP       | Corporate Private Placement             |
+| CB        | Convertible Bond                        |
+| DUAL      | Dual Currency                           |
+| EUCORP    | Euro Corporate Bond                     |
+| XLINKD    | Indexed Linked                          |
+| STRUCT    | Structured Notes                        |
+| YANK      | Yankee Corporate Bond                   |
+| FOR       | Foreign Exchange Contract               |
+| CS        | Common Stock                            |
+| PS        | Preferred Stock                         |
+| BRANDY    | Brady Bond                              |
+| EUSOV     | Euro Sovereigns                         |
+| TBOND     | US Treasury Bond                        |
+| TINT      | Interest Strip                          |
+| TIPS      | Treasury Inflation Protected Securities |
+| TCAL      | Callable Principal Strip                |
+| TPRN      | Non-callable Principal Strip            |
+| UST       | US Treasury Note (deprecated)           |
+| USTB      | US Treasury Bill (deprecated)           |
+| TNOTE     | US Treasury Note                        |
+| TBILL     | US Treasury Bill                        |
+| REPO      | Repurchase Agreement                    |
+| FORWARD   | Forward                                 |
+| BUYSELL   | Buy Sellback                            |
+| SECLOAN   | Securities Loan                         |
+| SECPLEDGE | Securities Pledge                       |
+| TERM      | Term Loan                               |
+| RVLV      | Revolver Loan                           |
+| RVLVTRM   | Revolver/Term Loan                      |
+| BRIDGE    | Bridge Loan                             |
+| LOFC      | Letter of Credit                        |
+| SWING     | Swing Line Facility                     |
+| DINP      | Debtor in Possession                    |
+| DEFLTED   | Defaulted                               |
+| WITHDRN   | Withdrawn                               |
+| REPLACD   | Replaced                                |
+| MATURED   | Matured                                 |
+| AMENDED   | Amended & Restated                      |
+| RETIRED   | Retired                                 |
+| BA        | Bankers Acceptance                      |
+| BN        | Bank Notes                              |
+| BOX       | Bill of Exchanges                       |
+| CD        | Certificate of Deposit                  |
+| CL        | Call Loans                              |
+| DN        | Deposit Notes                           |
+| EUCD      | Euro Certificate of Deposit             |
+| EUCP      | Euro Commercial Paper                   |
+| LQN       | Liquidity Note                          |
+| MTN       | Medium Term Notes                       |
+| ONITE     | Overnight                               |
+| PN        | Promissory Note                         |
+| PZFJ      | Plazos Fijos                            |
+| STN       | Short Term Loan Note                    |
+| TD        | Time Deposit                            |
+| XCN       | Extended Comm Note                      |
+| YCD       | Yankee Certificate of Deposit           |
+| ABS       | Asset-backed Securities                 |
+| CMBS      | Mortgage-backed Securities              |
+| CMO       | Collateralized Mortgage Obligation      |
+| IET       | IOETTE Mortgage                         |
+| MBS       | Mortgage-backed Securities              |
+| MIO       | Mortgage Interest Only                  |
+| MPO       | Mortgage Principal Only                 |
+| MPP       | Mortgage Private Placement              |
+| MPT       | Miscellaneous Pass-through              |
+| PFAND     | Pfandbriefe                             |
+| TBA       | To be Announced                         |
+| AN        | Anticipation Notes                      |
+| COFO      | Certificate of Obligation               |
+| COFP      | Certificate of Participation            |
+| GO        | General Obligation Bonds                |
+| MT        | Mandatory Tender                        |
+| RAN       | Revenue Anticipation Note               |
+| REV       | Revenue Bonds                           |
+| SPCLA     | Special Assessment                      |
+| SPCLO     | Special Obligation                      |
+| SPCLT     | Special Tax                             |
+| TAN       | Tax Anticipation Note                   |
+| TAXA      | Tax Allocation                          |
+| TECP      | Tax Exempt Commercial Paper             |
+| TRAN      | Tax & Revenue Anticipation Note         |
+| VRDN      | Variable Rate Demand Note               |
+| WAR       | Warrant                                 |
+| MF        | Mutual Fund                             |
+| MLEG      | Multi-leg instrument                    |
+| NONE      | No Security Type                        |
+| ?         | Wildcard                                |
+| FXSPOT    | FX Spot                                 |
+| FXSWAP    | FX Swap                                 |
+| FXFWD     | FX Forward                              |
+| FXBKT     | FX Basket                               |
+
+---
+
+# 5. TrdType (Tag 828)
+
+| Значение | Описание                     |
+| -------- | ---------------------------- |
+| 0        | Regular Trade                |
+| 1        | Block Trade                  |
+| 2        | Exchange for Physical        |
+| 3        | Transfer                     |
+| 4        | Late Trade                   |
+| 5        | T Trade                      |
+| 6        | Weighted Average Price Trade |
+| 7        | Bunched Trade                |
+| 8        | Late Bunched Trade           |
+| 9        | Prior Reference Price Trade  |
+| 10       | After Hours Trade            |
+| 22       | Privately Negotiated Trades  |
+| 53       | Repurchase agreement         |
+| 101      | Margin call                  |
+
+---
+
+# 6. CommType (Tag 13)
+
+| Значение | Описание                                |
+| -------- | --------------------------------------- |
+| 1        | per unit                                |
+| 2        | percentage                              |
+| 3        | absolute amount                         |
+| 4        | percentage waived - cash discount       |
+| 5        | percentage waived - enhanced units      |
+| 6        | points per bond or contract             |
+| 100      | points per quick settlement instruction |
+
+---
+
+# 7. OrdType (Tag 40)
+
+| Значение | Описание                      |
+| -------- | ----------------------------- |
+| 1        | Market                        |
+| 2        | Limit                         |
+| 3        | Stop                          |
+| 4        | Stop limit                    |
+| 6        | With or without               |
+| 7        | Limit or better               |
+| 8        | Limit with or without         |
+| 9        | On basis                      |
+| D        | Previously quoted             |
+| E        | Previously indicated          |
+| G        | Forex - Swap                  |
+| I        | Funari                        |
+| J        | Market If Touched             |
+| K        | Market with Leftover as Limit |
+| L        | Previous Fund Valuation Point |
+| M        | Next Fund Valuation Point     |
+| P        | Pegged                        |
+| W        | Weighted-average price        |
+
+---
+
+# 8. MiscFeeType (Tag 139)
+
+| Значение | Описание               |
+| -------- | ---------------------- |
+| 1        | Regulatory             |
+| 2        | Tax                    |
+| 3        | Local Commission       |
+| 4        | Exchange Fees          |
+| 5        | Stamp                  |
+| 6        | Levy                   |
+| 7        | Other                  |
+| 8        | Markup                 |
+| 9        | Consumption Tax        |
+| 10       | Per transaction        |
+| 11       | Conversion             |
+| 12       | Agent                  |
+| 98       | Clearing fees          |
+| 99       | Technical support fees |
+
+---
+
+# 9. TradSesStatus (Tag 340)
+
+| Значение | Описание                             |
+| -------- | ------------------------------------ |
+| 0        | Unknown                              |
+| 1        | Halted                               |
+| 2        | Open                                 |
+| 3        | Closed                               |
+| 4        | Pre-Open                             |
+| 5        | Pre-Close                            |
+| 6        | Request Rejected                     |
+| 100      | Trading system restarted             |
+| 101      | Connection established               |
+| 102      | Connection terminated correctly      |
+| 103      | Connection terminated non-gracefully |
+| 104      | Reconnecting                         |
+
+---
+
+# 10. ExecRestatementReason (Tag 378)
+
+| Значение | Описание                                |
+| -------- | --------------------------------------- |
+| 0        | GT Corporate action                     |
+| 1        | GT renewal/restatement                  |
+| 2        | Verbal change                           |
+| 3        | Repricing of order                      |
+| 4        | Broker option                           |
+| 5        | Partial decline of OrderQty             |
+| 6        | Cancel on Trading Halt                  |
+| 7        | Cancel on System Failure                |
+| 8        | Market Option                           |
+| 9        | Canceled, Not Best                      |
+| 10       | Warehouse recap                         |
+| 97       | Cancel when can't be filled immediately |
+| 98       | Cancel at end of trading session        |
+| 99       | Other                                   |
+
+---
+
+# 11. ClearingStatus (Tag 5540)
+
+| Значение | Описание                 |
+| -------- | ------------------------ |
+| S        | Settled                  |
+| U        | Not settled              |
+| P        | In process of settlement |
+
+---
+
+# 12. ClearingHandlingType (Tag 9938)
+
+| Значение | Описание       |
+| -------- | -------------- |
+| S        | Simple (quick) |
+| M        | Multilateral   |
+
+---
+
+# 13. OperationType (Tag 10103)
+
+| Значение | Описание |
+| -------- | -------- |
+| 1        | Deposit  |
+| 2        | Withdraw |
+
+---
+
+# 14. Message Synchronization (MsgType=US)
+
+## Поля
+
+| Tag  | Поле                 | Обязательное |
+| ---- | -------------------- | ------------ |
+| 5001 | SyncMessageSeqNum    | Y            |
+| 5002 | SyncMessageDirection | Y            |
+| 5003 | SyncMessageLength    | Y            |
+| 5004 | SyncMessageData      | Y            |
+| 553  | Username             | Y            |
+| 5005 | IsAdministrative     | Y            |
+| 5006 | IsOriginal           | Y            |
+| 5007 | StorageId            | Y            |
+
+---
+
+# 15. Блок Parties
+
+## Структура
+
+| Tag | Поле          |
+| --- | ------------- |
+| 453 | NoPartyIDs    |
+| 448 | PartyID       |
+| 447 | PartyIDSource |
+| 452 | PartyRole     |
+
+---
+
+# 16. Блок TrdRegTimestamps
+
+## Структура
+
+| Tag | Поле                |
+| --- | ------------------- |
+| 768 | NoTrdRegTimestamps  |
+| 769 | TrdRegTimestamp     |
+| 770 | TrdRegTimestampType |
+
+---
+
+# 17. Сообщение Execution Report (MsgType=8)
+
+## Основные поля
+
+| Tag  | Поле           | Req  |
+| ---- | -------------- | ---- |
+| 11   | ClOrdID        | Y    |
+| 41   | OrigClOrdID    | N    |
+| 54   | Side           | N    |
+| 1    | Account        | N    |
+| 151  | LeavesQty      | N    |
+| 14   | CumQty         | N    |
+| 6    | AvgPx          | N    |
+| 64   | SettlDate      | N    |
+| 32   | LastQty        | Cond |
+| 31   | LastPx         | Cond |
+| 60   | TransactTime   | Cond |
+| 84   | CxlQty         | N    |
+| 1090 | MaxPriceLevels | N    |
+| 5979 | RequestTime    | N    |
+
+---
+
+# 18. Сообщение Trade Capture Report (MsgType=AE)
+
+## Основные поля
+
+| Tag   | Поле                      | Req  |
+| ----- | ------------------------- | ---- |
+| 828   | TrdType                   | Y    |
+| 829   | TrdSubType                | Cond |
+| 150   | ExecType                  | Y    |
+| 17    | ExecID                    | Y    |
+| 64    | SettlDate                 | N    |
+| 640   | Price2                    | N    |
+| 44    | Price                     | N    |
+| 669   | LastParPx                 | N    |
+| 5540  | ClearingStatus            | N    |
+| 5934  | ClearingRefNo             | N    |
+| 9938  | ClearingHandlingType      | N    |
+| 10103 | OperationType             | N    |
+| 10104 | Price1                    | N    |
+| 10105 | CurrentRepoValue          | N    |
+| 10106 | CurrentRepoBackValue      | N    |
+| 10110 | TradeBalance              | N    |
+| 10111 | TotalAmount               | N    |
+| 10117 | LastCouponPaymentValue    | N    |
+| 10118 | LastCouponPaymentDate     | N    |
+| 10119 | LastPrincipalPaymentValue | N    |
+| 10120 | LastPrincipalPaymentDate  | N    |
+| 10121 | ExpectedDiscount          | N    |
+| 10122 | ExpectedQty               | N    |
+| 10123 | ExpectedRepoValue         | N    |
+| 10124 | ExpectedRepoBackValue     | N    |
+| 10125 | ExpectedReturnValue       | N    |
+| 10126 | PreciseBalance            | N    |
+| 1056  | CalculatedCcyLastQty      | N    |
+| 526   | SecondaryClOrdID          | N    |
+
+---
+
+# 19. Сообщение New Order - Single (MsgType=D)
+
+| Tag  | Поле              | Req  |
+| ---- | ----------------- | ---- |
+| 1    | Account           | Y    |
+| 386  | NoTradingSessions | Y    |
+| 336  | TradingSessionID  | Cond |
+| 44   | Price             | Cond |
+| 1090 | MaxPriceLevels    | N    |
+
+---
+
+# 20. Сообщение Order Cancel Request (MsgType=F)
+
+| Tag | Поле         | Req |
+| --- | ------------ | --- |
+| 54  | Side         | N   |
+| 41  | OrigClOrdID  | N   |
+| 60  | TransactTime | N   |
+
+---
+
+# 21. Сообщение Order Status Request (MsgType=H)
+
+| Tag | Поле | Req |
+| --- | ---- | --- |
+| 54  | Side | N   |
+
+---
+
+# 22. Сообщение Order Cancel/Replace Request (MsgType=G)
+
+| Tag | Поле             | Req  |
+| --- | ---------------- | ---- |
+| 336 | TradingSessionID | N    |
+| 44  | Price            | Cond |
+
+---
+
+# 23. Сообщение Order Mass Cancel Request (MsgType=q)
+
+| Tag | Поле             | Req  |
+| --- | ---------------- | ---- |
+| 336 | TradingSessionID | Cond |
+| 1   | Account          | N    |
+
+---
+
+# 24. Сообщение Order Mass Cancel Report (MsgType=r)
+
+| Tag  | Поле                   | Req  |
+| ---- | ---------------------- | ---- |
+| 532  | MassCancelRejectReason | Cond |
+| 336  | TradingSessionID       | Cond |
+| 1    | Account                | N    |
+| 5979 | RequestTime            | N    |
+
+---
+
+# 25. Сообщение Trade Capture Report Request Ack (MsgType=AQ)
+
+Содержит блок Instrument.
+
+---
+
+# 26. Формат времени RequestTime
+
+Формат:
+YYYYMMDD-HH:mm:ss.uuuuuu
+
+Пример:
+20260528-14:22:31.123456
+
+---
+
+# 27. Примечания
+
+* Сообщения и поля соответствуют FIX 4.4 с расширениями MICEX/MOEX.
+* Допускаются дополнительные пользовательские значения по согласованию сторон.
+* MsgType всегда является третьим полем FIX-сообщения.
+* Пользовательские расширения MICEX/MOEX используют теги выше 5000.

@@ -16,6 +16,7 @@ import quickfix.SessionNotFound;
 import quickfix.UnsupportedMessageType;
 import quickfix.field.Account;
 import quickfix.field.AvgPx;
+import quickfix.field.ClOrdID;
 import quickfix.field.CumQty;
 import quickfix.field.CxlRejReason;
 import quickfix.field.ExecType;
@@ -62,6 +63,18 @@ public class KaseFixApplication implements Application {
      * read by the main (menu) thread.
      */
     private volatile SessionID activeSessionId;
+
+    /**
+     * Reference to the OrderManager so that, when an ExecutionReport comes in,
+     * we can store the exchange OrderID (37) against the order we sent. Set
+     * once at startup via {@link #setOrderManager(OrderManager)}.
+     */
+    private volatile OrderManager orderManager;
+
+    /** Wire in the OrderManager (called once at startup). */
+    public void setOrderManager(OrderManager orderManager) {
+        this.orderManager = orderManager;
+    }
 
     /** @return the currently logged-on session, or null if not connected. */
     public SessionID getActiveSessionId() {
@@ -210,6 +223,12 @@ public class KaseFixApplication implements Application {
 
         log.info("EXECUTION REPORT  | ExchangeOrderID={} | status={} | execType={}",
                 orderId, describeOrdStatus(ordStatus), describeExecType(execType));
+
+        // Link the exchange OrderID (37) back to our ClOrdID (11) so that a
+        // later cancel can reference the exchange order number.
+        if (orderManager != null && m.isSetField(ClOrdID.FIELD) && m.isSetField(OrderID.FIELD)) {
+            orderManager.recordExchangeOrderId(m.getString(ClOrdID.FIELD), m.getString(OrderID.FIELD));
+        }
 
         if (m.isSetField(LastPx.FIELD) && m.isSetField(LastQty.FIELD)) {
             log.info("   Last fill: qty={} @ price={}",

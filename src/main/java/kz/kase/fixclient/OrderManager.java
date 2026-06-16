@@ -2,6 +2,7 @@ package kz.kase.fixclient;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -9,14 +10,15 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import quickfix.field.Account;
 import quickfix.field.ClOrdID;
-import quickfix.field.HandlInst;
 import quickfix.field.OrdType;
 import quickfix.field.OrderQty;
 import quickfix.field.OrigClOrdID;
 import quickfix.field.Price;
 import quickfix.field.Side;
 import quickfix.field.Symbol;
+import quickfix.field.TradingSessionID;
 import quickfix.field.TransactTime;
 import quickfix.fix44.NewOrderSingle;
 import quickfix.fix44.OrderCancelRequest;
@@ -30,16 +32,33 @@ import quickfix.fix44.OrderCancelRequest;
  *   1. NewOrderSingle     (FIX MsgType "D") -> place a brand new order
  *   2. OrderCancelRequest (FIX MsgType "F") -> cancel an order we placed
  *
- * It also keeps a small in-memory "order book" of the orders we have sent,
- * indexed by their ClOrdID. We need this because to cancel an order, the
- * exchange requires us to repeat some of the original order's details
- * (symbol, side, quantity) plus reference the original ClOrdID.
+ * ===========================================================================
+ *  IMPORTANT - KASE / MOEX "MFIX" SPECIFICS (see spec section 4.2.2):
+ *  A New Order - Single (D) is ONLY accepted by KASE if it contains, at least:
+ *
+ *    11  ClOrdID            - our unique order id
+ *    1   Account            - the trading account the order is booked to
+ *    386 NoTradingSessions  - repeating group count, MUST be exactly 1
+ *    336 TradingSessionID   - the BOARD / trading mode (a.k.a. SECBOARD)
+ *    55  Symbol             - the instrument code (a.k.a. SECCODE)
+ *    54  Side               - 1 = buy, 2 = sell
+ *    60  TransactTime       - message time, in UTC
+ *    38  OrderQty           - quantity in lots
+ *    40  OrdType            - 1 = market, 2 = limit
+ *    44  Price              - required for limit; MUST be 0 for market
+ *
+ *  The pair (336 TradingSessionID + 55 Symbol) must point at a real
+ *  instrument, otherwise KASE rejects the order. If any of the mandatory
+ *  fields above are missing, KASE replies with a Business Message Reject
+ *  (35=j) and the generic text "Unsupported message type." - which is what
+ *  happened before these fields were added.
+ * ===========================================================================
  *
  * NOTE ON IDENTIFIERS:
  *   - ClOrdID (tag 11): a UNIQUE id WE generate for every order/cancel.
- *     The exchange uses it to know which message we mean.
- *   - OrigClOrdID (tag 41): when cancelling, this is the ClOrdID of the
- *     ORIGINAL order we want to cancel.
+ *   - OrigClOrdID (tag 41): when cancelling, the ClOrdID of the ORIGINAL order.
+ *   - OrderID (tag 37): the EXCHANGE's own order number, returned in the
+ *     ExecutionReport. KASE recommends cancelling by OrderID when you have it.
  */
 public class OrderManager {
 
@@ -58,16 +77,40 @@ public class OrderManager {
     }
 
     /**
-     * A tiny record of an order we sent, kept so we can build a cancel for it.
+     * A small, mutable holder for an order we sent, kept so we can cancel it.
      *
-     * @param clOrdId the unique id we assigned to the order
-     * @param symbol  the instrument (e.g. "KZAP")
-     * @param side    Side.BUY ('1') or Side.SELL ('2')
-     * @param quantity number of units ordered
-     * @param price   limit price (may be null for a market order)
+     * <p>{@code exchangeOrderId} starts out null and is filled in later, when
+     * KASE sends back an ExecutionReport carrying the exchange OrderID (37).
      */
-    public record SentOrder(String clOrdId, String symbol, char side,
-                            BigDecimal quantity, BigDecimal price) {
+    public static final class SentOrder {
+        final String clOrdId;
+        final String symbol;
+        final String board;     // TradingSessionID (336)
+        final String account;   // Account (1)
+        final char side;        // Side (54)
+        final BigDecimal quantity;
+        final BigDecimal price; // null = market order
+        volatile String exchangeOrderId; // OrderID (37), learned from ExecutionReport
+
+        SentOrder(String clOrdId, String symbol, String board, String account,
+                  char side, BigDecimal quantity, BigDecimal price) {
+            this.clOrdId = clOrdId;
+            this.symbol = symbol;
+            this.board = board;
+            this.account = account;
+            this.side = side;
+            this.quantity = quantity;
+            this.price = price;
+        }
+
+        public String clOrdId()         { return clOrdId; }
+        public String symbol()          { return symbol; }
+        public String board()           { return board; }
+        public String account()         { return account; }
+        public char side()              { return side; }
+        public BigDecimal quantity()    { return quantity; }
+        public BigDecimal price()       { return price; }
+        public String exchangeOrderId() { return exchangeOrderId; }
     }
 
     /** @return an unmodifiable view of all orders we have sent this session. */
@@ -76,18 +119,34 @@ public class OrderManager {
     }
 
     /**
-     * Build and send a NEW ORDER.
+     * Record the exchange OrderID (tag 37) that KASE assigned to one of our
+     * orders. Called from the FIX application when an ExecutionReport arrives.
      *
-     * @param symbol     instrument symbol, e.g. "KZAP". SUBSTITUTE with a real
-     *                   KASE symbol when testing.
-     * @param buy        true = BUY, false = SELL
-     * @param quantity   how many units to trade
-     * @param limitPrice the price for a LIMIT order. Pass null to send a
-     *                   MARKET order instead (no price).
-     * @return the ClOrdID assigned to this order (you use it to cancel later),
-     *         or null if the message could not be sent.
+     * @param clOrdId         our client order id (tag 11) echoed back by KASE
+     * @param exchangeOrderId the exchange's order number (tag 37)
      */
-    public String sendNewOrder(String symbol, boolean buy, BigDecimal quantity, BigDecimal limitPrice) {
+    public void recordExchangeOrderId(String clOrdId, String exchangeOrderId) {
+        SentOrder order = sentOrders.get(clOrdId);
+        if (order != null && exchangeOrderId != null && !exchangeOrderId.isBlank()) {
+            order.exchangeOrderId = exchangeOrderId;
+            log.debug("Linked our ClOrdID={} to exchange OrderID={}", clOrdId, exchangeOrderId);
+        }
+    }
+
+    /**
+     * Build and send a NEW ORDER (New Order - Single, MsgType "D").
+     *
+     * @param symbol     instrument code / SECCODE, e.g. "AIRA".
+     * @param board      trading board / TradingSessionID / SECBOARD, e.g. "TQBR".
+     * @param account    trading account the order is booked to (tag 1).
+     * @param buy        true = BUY, false = SELL.
+     * @param quantity   quantity in lots.
+     * @param limitPrice limit price for a LIMIT order; pass null for a MARKET order.
+     * @return the ClOrdID assigned to this order (use it to cancel later), or
+     *         null if the message could not be sent.
+     */
+    public String sendNewOrder(String symbol, String board, String account,
+                               boolean buy, BigDecimal quantity, BigDecimal limitPrice) {
         // 1) Generate a unique client order id.
         String clOrdId = nextClOrdId();
 
@@ -98,34 +157,44 @@ public class OrderManager {
         char ordType = (limitPrice != null) ? OrdType.LIMIT : OrdType.MARKET;
 
         // 4) Build the message. The FIX 4.4 NewOrderSingle constructor needs
-        //    the four mandatory fields up front.
+        //    the four mandatory fields up front. NOTE: TransactTime must be UTC.
         NewOrderSingle order = new NewOrderSingle(
                 new ClOrdID(clOrdId),
                 new Side(side),
-                new TransactTime(LocalDateTime.now()),
+                new TransactTime(LocalDateTime.now(ZoneOffset.UTC)),
                 new OrdType(ordType));
 
-        // 5) Add the rest of the required/optional fields.
+        // 5) Account (tag 1) - which trading account this order belongs to.
+        order.set(new Account(account));
+
+        // 6) TradingSessionID group (tags 386 + 336). KASE REQUIRES exactly one
+        //    trading session, whose id is the board / trading mode (SECBOARD).
+        //    Calling addGroup() makes QuickFIX/J set NoTradingSessions (386)=1
+        //    automatically, and keeps 386 and 336 adjacent as KASE requires.
+        NewOrderSingle.NoTradingSessions tradingSession = new NewOrderSingle.NoTradingSessions();
+        tradingSession.set(new TradingSessionID(board));
+        order.addGroup(tradingSession);
+
+        // 7) Instrument + quantity.
         order.set(new Symbol(symbol));
         order.set(new OrderQty(quantity.doubleValue()));
 
-        // HandlInst (tag 21) = "1" means automated execution, no broker
-        // intervention. Many venues require it; KASE may ignore it. Safe to send.
-        order.set(new HandlInst(HandlInst.AUTOMATED_EXECUTION_NO_INTERVENTION));
-
-        // Only LIMIT orders carry a price.
+        // 8) Price. Limit orders carry the real price; MARKET orders MUST send 0
+        //    (this is a KASE/MOEX rule, see spec note on tag 44).
         if (limitPrice != null) {
             order.set(new Price(limitPrice.doubleValue()));
+        } else {
+            order.set(new Price(0));
         }
 
-        log.info("Placing NEW {} order: {} x {} @ {} (ClOrdID={})",
-                buy ? "BUY" : "SELL", quantity, symbol,
+        log.info("Placing NEW {} order: {} x {} on board '{}', account '{}', @ {} (ClOrdID={})",
+                buy ? "BUY" : "SELL", quantity, symbol, board, account,
                 limitPrice != null ? limitPrice : "MARKET", clOrdId);
 
-        // 6) Send it. If accepted by the engine, remember it for later cancels.
+        // 9) Send it. If accepted by the engine, remember it for later cancels.
         boolean sent = application.send(order);
         if (sent) {
-            sentOrders.put(clOrdId, new SentOrder(clOrdId, symbol, side, quantity, limitPrice));
+            sentOrders.put(clOrdId, new SentOrder(clOrdId, symbol, board, account, side, quantity, limitPrice));
             return clOrdId;
         }
         log.error("New order was NOT sent (are we logged on?).");
@@ -133,10 +202,15 @@ public class OrderManager {
     }
 
     /**
-     * Build and send an ORDER CANCEL REQUEST for an order we previously sent.
+     * Build and send an ORDER CANCEL REQUEST (MsgType "F") for an order we
+     * previously sent.
      *
-     * @param origClOrdId the ClOrdID returned by {@link #sendNewOrder} for the
-     *                    order you now want to cancel.
+     * <p>Per the KASE spec, a cancel needs the original order reference plus
+     * Side and TransactTime. We reference the order by OrigClOrdID (41) and,
+     * if KASE has already given us the exchange OrderID (37), we include that
+     * too because KASE treats OrderID as the more reliable reference.
+     *
+     * @param origClOrdId the ClOrdID returned by {@link #sendNewOrder}.
      * @return the new ClOrdID assigned to the cancel request, or null on failure.
      */
     public String sendCancel(String origClOrdId) {
@@ -150,19 +224,26 @@ public class OrderManager {
         // The cancel request needs its OWN new unique ClOrdID.
         String cancelClOrdId = nextClOrdId();
 
-        // FIX 4.4 OrderCancelRequest mandatory fields:
+        // FIX 4.4 OrderCancelRequest mandatory fields (TransactTime in UTC):
         OrderCancelRequest cancel = new OrderCancelRequest(
                 new OrigClOrdID(original.clOrdId()), // which order to cancel
                 new ClOrdID(cancelClOrdId),          // id of this cancel message
                 new Side(original.side()),
-                new TransactTime(LocalDateTime.now()));
+                new TransactTime(LocalDateTime.now(ZoneOffset.UTC)));
 
-        // Repeat the instrument and quantity from the original order.
+        // If KASE has told us the exchange order number, reference it too -
+        // KASE ignores OrigClOrdID when OrderID is present and treats it as
+        // the authoritative reference.
+        if (original.exchangeOrderId() != null && !original.exchangeOrderId().isBlank()) {
+            cancel.set(new quickfix.field.OrderID(original.exchangeOrderId()));
+        }
+
+        // Repeat the instrument (required by the standard FIX 4.4 dictionary).
         cancel.set(new Symbol(original.symbol()));
         cancel.set(new OrderQty(original.quantity().doubleValue()));
 
-        log.info("Cancelling order ClOrdID={} (symbol={}, qty={}). Cancel ClOrdID={}",
-                origClOrdId, original.symbol(), original.quantity(), cancelClOrdId);
+        log.info("Cancelling order ClOrdID={} (exchangeOrderID={}, symbol={}, qty={}). Cancel ClOrdID={}",
+                origClOrdId, original.exchangeOrderId(), original.symbol(), original.quantity(), cancelClOrdId);
 
         boolean sent = application.send(cancel);
         if (sent) {
