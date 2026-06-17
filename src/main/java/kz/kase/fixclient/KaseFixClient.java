@@ -9,7 +9,17 @@ import org.slf4j.LoggerFactory;
 
 import org.quickfixj.CharsetSupport;
 
-import quickfix.*;
+import quickfix.DefaultMessageFactory;
+import quickfix.FileLogFactory;
+import quickfix.FileStoreFactory;
+import quickfix.Initiator;
+import quickfix.LogFactory;
+import quickfix.MessageFactory;
+import quickfix.MessageStoreFactory;
+import quickfix.Session;
+import quickfix.SessionID;
+import quickfix.SessionSettings;
+import quickfix.SocketInitiator;
 
 /**
  * KaseFixClient  -  APPLICATION ENTRY POINT
@@ -167,7 +177,7 @@ public class KaseFixClient {
 
         while (true) {
             printMenu(application);
-            System.out.print("Choose an option: ");
+            System.out.println("Choose an option:");
             String choice = in.hasNextLine() ? in.nextLine().trim() : "0";
 
             try {

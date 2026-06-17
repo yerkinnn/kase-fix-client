@@ -1,5 +1,7 @@
 package kz.kase.fixclient;
 
+import java.util.StringJoiner;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,18 +18,34 @@ import quickfix.SessionNotFound;
 import quickfix.UnsupportedMessageType;
 import quickfix.field.Account;
 import quickfix.field.AvgPx;
+import quickfix.field.BusinessRejectReason;
 import quickfix.field.ClOrdID;
 import quickfix.field.CumQty;
 import quickfix.field.CxlRejReason;
 import quickfix.field.ExecType;
+import quickfix.field.HeartBtInt;
 import quickfix.field.LastPx;
 import quickfix.field.LastQty;
 import quickfix.field.LeavesQty;
+import quickfix.field.MsgSeqNum;
 import quickfix.field.MsgType;
 import quickfix.field.OrdStatus;
+import quickfix.field.OrdType;
 import quickfix.field.OrderID;
+import quickfix.field.OrderQty;
+import quickfix.field.OrigClOrdID;
 import quickfix.field.Password;
+import quickfix.field.Price;
+import quickfix.field.RefMsgType;
+import quickfix.field.RefSeqNum;
+import quickfix.field.RefTagID;
+import quickfix.field.ResetSeqNumFlag;
+import quickfix.field.SessionRejectReason;
+import quickfix.field.Side;
+import quickfix.field.Symbol;
 import quickfix.field.Text;
+import quickfix.field.TradSesStatus;
+import quickfix.field.TradingSessionID;
 import quickfix.field.Username;
 
 /**
@@ -157,6 +175,8 @@ public class KaseFixApplication implements Application {
         } catch (FieldNotFound e) {
             log.warn("Could not read MsgType while preparing admin message.", e);
         }
+        // Parsed, human-readable summary first, then the exact raw FIX line.
+        log.debug("{}", describe(message, false));
         log.debug("--> ADMIN OUT: {}", prettyFix(message));
     }
 
@@ -167,6 +187,8 @@ public class KaseFixApplication implements Application {
     @Override
     public void fromAdmin(Message message, SessionID sessionId)
             throws FieldNotFound, IncorrectDataFormat, IncorrectTagValue, RejectLogon {
+        // Parsed, human-readable summary first, then the exact raw FIX line.
+        log.debug("{}", describe(message, true));
         log.debug("<-- ADMIN IN : {}", prettyFix(message));
 
         // If the server sends us a Logout with a reason (Text, tag 58),
@@ -191,6 +213,8 @@ public class KaseFixApplication implements Application {
      */
     @Override
     public void toApp(Message message, SessionID sessionId) throws DoNotSend {
+        // Parsed, human-readable summary first, then the exact raw FIX line.
+        log.info("{}", describe(message, false));
         log.info("--> APP OUT  : {}", prettyFix(message));
     }
 
@@ -202,6 +226,8 @@ public class KaseFixApplication implements Application {
     @Override
     public void fromApp(Message message, SessionID sessionId)
             throws FieldNotFound, IncorrectDataFormat, IncorrectTagValue, UnsupportedMessageType {
+        // Parsed, human-readable summary first, then the exact raw FIX line.
+        log.info("{}", describe(message, true));
         log.info("<-- APP IN   : {}", prettyFix(message));
 
         String msgType = message.getHeader().getString(MsgType.FIELD);
@@ -295,6 +321,146 @@ public class KaseFixApplication implements Application {
         // The raw FIX string uses an invisible 0x01 byte between fields.
         // Replace it with '|' so the log line is human readable.
         return message.toString().replace('\u0001', '|');
+    }
+
+    /**
+     * Build a short, human-readable summary of a FIX message: the direction,
+     * a friendly message-type name, and a few key fields for that type. This is
+     * logged ALONGSIDE (just above) the raw FIX line so you can tell at a glance
+     * what each IN/OUT message is. This method NEVER throws - logging must never
+     * break message handling.
+     *
+     * Examples:
+     *   "OUT -> LOGON | seq=1 | HeartBtInt=30 | ResetSeqNum=Y"
+     *   "IN  <- HEARTBEAT | seq=18"
+     *   "IN  <- EXECUTION REPORT | seq=4 | ClOrdID=ORD-1 | status=REJECTED | text=..."
+     *
+     * @param message  the FIX message
+     * @param incoming true if we RECEIVED it, false if we are SENDING it
+     */
+    private static String describe(Message message, boolean incoming) {
+        String dir = incoming ? "IN  <-" : "OUT ->";
+        try {
+            String msgType = message.getHeader().getString(MsgType.FIELD);
+            StringBuilder sb = new StringBuilder(dir).append(' ').append(msgTypeName(msgType));
+
+            // Sequence number (tag 34) lives in the header and is on every message.
+            if (message.getHeader().isSetField(MsgSeqNum.FIELD)) {
+                sb.append(" | seq=").append(message.getHeader().getString(MsgSeqNum.FIELD));
+            }
+
+            String key = keyFields(message, msgType);
+            if (!key.isEmpty()) {
+                sb.append(" | ").append(key);
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return dir + " (could not parse message: " + e.getMessage() + ")";
+        }
+    }
+
+    /** Maps a FIX MsgType code (tag 35) to a friendly, readable name. */
+    private static String msgTypeName(String msgType) {
+        return switch (msgType) {
+            case MsgType.HEARTBEAT -> "HEARTBEAT";
+            case MsgType.TEST_REQUEST -> "TEST REQUEST";
+            case MsgType.RESEND_REQUEST -> "RESEND REQUEST";
+            case MsgType.REJECT -> "SESSION REJECT";
+            case MsgType.SEQUENCE_RESET -> "SEQUENCE RESET";
+            case MsgType.LOGOUT -> "LOGOUT";
+            case MsgType.LOGON -> "LOGON";
+            case MsgType.NEW_ORDER_SINGLE -> "NEW ORDER";
+            case MsgType.ORDER_CANCEL_REQUEST -> "ORDER CANCEL REQUEST";
+            case MsgType.ORDER_CANCEL_REPLACE_REQUEST -> "ORDER CANCEL/REPLACE";
+            case MsgType.ORDER_MASS_CANCEL_REQUEST -> "ORDER MASS CANCEL REQUEST";
+            case MsgType.EXECUTION_REPORT -> "EXECUTION REPORT";
+            case MsgType.ORDER_CANCEL_REJECT -> "ORDER CANCEL REJECT";
+            case MsgType.BUSINESS_MESSAGE_REJECT -> "BUSINESS MESSAGE REJECT";
+            case MsgType.ORDER_MASS_CANCEL_REPORT -> "ORDER MASS CANCEL REPORT";
+            case MsgType.TRADING_SESSION_STATUS -> "TRADING SESSION STATUS";
+            case MsgType.TRADE_CAPTURE_REPORT -> "TRADE CAPTURE REPORT";
+            default -> "MsgType=" + msgType;
+        };
+    }
+
+    /**
+     * Pick out a few important fields for the given message type and format
+     * them as "label=value | label=value". Only present fields are included.
+     */
+    private static String keyFields(Message m, String msgType) throws FieldNotFound {
+        StringJoiner j = new StringJoiner(" | ");
+        switch (msgType) {
+            case MsgType.LOGON -> {
+                add(j, m, HeartBtInt.FIELD, "HeartBtInt");
+                add(j, m, ResetSeqNumFlag.FIELD, "ResetSeqNum");
+            }
+            case MsgType.LOGOUT -> add(j, m, Text.FIELD, "text");
+            case MsgType.REJECT -> {
+                add(j, m, RefSeqNum.FIELD, "refSeq");
+                add(j, m, RefTagID.FIELD, "refTag");
+                add(j, m, SessionRejectReason.FIELD, "reason");
+                add(j, m, Text.FIELD, "text");
+            }
+            case MsgType.NEW_ORDER_SINGLE -> {
+                add(j, m, ClOrdID.FIELD, "ClOrdID");
+                if (m.isSetField(Side.FIELD)) j.add(sideName(m.getChar(Side.FIELD)));
+                add(j, m, OrderQty.FIELD, "qty");
+                add(j, m, Symbol.FIELD, "symbol");
+                add(j, m, Price.FIELD, "price");
+                if (m.isSetField(OrdType.FIELD)) j.add(ordTypeName(m.getChar(OrdType.FIELD)));
+            }
+            case MsgType.ORDER_CANCEL_REQUEST -> {
+                add(j, m, OrigClOrdID.FIELD, "OrigClOrdID");
+                add(j, m, ClOrdID.FIELD, "ClOrdID");
+                add(j, m, Symbol.FIELD, "symbol");
+            }
+            case MsgType.EXECUTION_REPORT -> {
+                add(j, m, ClOrdID.FIELD, "ClOrdID");
+                if (m.isSetField(OrdStatus.FIELD)) j.add("status=" + describeOrdStatus(m.getChar(OrdStatus.FIELD)));
+                if (m.isSetField(ExecType.FIELD)) j.add("execType=" + describeExecType(m.getChar(ExecType.FIELD)));
+                add(j, m, Text.FIELD, "text");
+            }
+            case MsgType.BUSINESS_MESSAGE_REJECT -> {
+                add(j, m, RefMsgType.FIELD, "refMsgType");
+                add(j, m, BusinessRejectReason.FIELD, "reason");
+                add(j, m, Text.FIELD, "text");
+            }
+            case MsgType.ORDER_CANCEL_REJECT -> {
+                add(j, m, CxlRejReason.FIELD, "reason");
+                add(j, m, Text.FIELD, "text");
+            }
+            case MsgType.TRADING_SESSION_STATUS -> {
+                add(j, m, TradingSessionID.FIELD, "board");
+                add(j, m, TradSesStatus.FIELD, "status");
+            }
+            default -> {
+                // HEARTBEAT, TEST REQUEST, SEQUENCE RESET, etc.: seq alone is enough.
+            }
+        }
+        return j.toString();
+    }
+
+    /** Append "label=value" to the joiner, but only if the field is present. */
+    private static void add(StringJoiner j, Message m, int tag, String label) throws FieldNotFound {
+        if (m.isSetField(tag)) {
+            j.add(label + "=" + m.getString(tag));
+        }
+    }
+
+    private static String sideName(char s) {
+        return switch (s) {
+            case Side.BUY -> "BUY";
+            case Side.SELL -> "SELL";
+            default -> "side='" + s + "'";
+        };
+    }
+
+    private static String ordTypeName(char t) {
+        return switch (t) {
+            case OrdType.MARKET -> "MARKET";
+            case OrdType.LIMIT -> "LIMIT";
+            default -> "ordType='" + t + "'";
+        };
     }
 
     private static String describeOrdStatus(char s) {
