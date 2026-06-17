@@ -9,17 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import org.quickfixj.CharsetSupport;
 
-import quickfix.DefaultMessageFactory;
-import quickfix.FileLogFactory;
-import quickfix.FileStoreFactory;
-import quickfix.Initiator;
-import quickfix.LogFactory;
-import quickfix.MessageFactory;
-import quickfix.MessageStoreFactory;
-import quickfix.Session;
-import quickfix.SessionID;
-import quickfix.SessionSettings;
-import quickfix.SocketInitiator;
+import quickfix.*;
 
 /**
  * KaseFixClient  -  APPLICATION ENTRY POINT
@@ -74,22 +64,11 @@ public class KaseFixClient {
         SessionID configuredSessionId = injectCredentials(settings, application);
 
         // -----------------------------------------------------------------
-        // 3) Wire up the standard QuickFIX/J building blocks:
-        //    - storeFactory: remembers sequence numbers between runs
-        //    - logFactory  : writes the raw FIX messages to logs/fix-messages
-        //    - msgFactory  : knows how to build FIX message objects
-        // -----------------------------------------------------------------
-        MessageStoreFactory storeFactory = new FileStoreFactory(settings);
-        LogFactory logFactory = new FileLogFactory(settings);
-        MessageFactory msgFactory = new DefaultMessageFactory();
-
-        // -----------------------------------------------------------------
-        // 4) Create the INITIATOR. An "initiator" is the side that connects
+        // 3) Create the INITIATOR. An "initiator" is the side that connects
         //    out to the server (us). It will automatically connect and send
         //    the Logon as soon as we call start().
         // -----------------------------------------------------------------
-        Initiator initiator = new SocketInitiator(
-                application, storeFactory, settings, logFactory, msgFactory);
+        Initiator initiator = getInitiator(settings, application);
 
         OrderManager orderManager = new OrderManager(application);
         // Let the application link incoming ExecutionReports back to our orders.
@@ -106,23 +85,38 @@ public class KaseFixClient {
         }));
 
         // -----------------------------------------------------------------
-        // 5) START -> this triggers the connection + LOGON to KASE.
+        // 4) START -> this triggers the connection + LOGON to KASE.
         // -----------------------------------------------------------------
         initiator.start();
         log.info("FIX engine started. Attempting to connect & logon to KASE...");
         log.info("(If the host/port/credentials are still placeholders, logon will fail - that is expected.)");
 
         // -----------------------------------------------------------------
-        // 6) Run the interactive menu until the user chooses to exit.
+        // 5) Run the interactive menu until the user chooses to exit.
         // -----------------------------------------------------------------
         runMenu(application, orderManager, configuredSessionId, orderDefaults);
 
         // -----------------------------------------------------------------
-        // 7) Clean shutdown.
+        // 6) Clean shutdown.
         // -----------------------------------------------------------------
         log.info("Stopping FIX engine...");
         initiator.stop();
         log.info("Goodbye.");
+    }
+
+    private static Initiator getInitiator(SessionSettings settings, KaseFixApplication application) throws ConfigError {
+        // -----------------------------------------------------------------
+        // Wire up the standard QuickFIX/J building blocks:
+        //    - storeFactory: remembers sequence numbers between runs
+        //    - logFactory  : writes the raw FIX messages to logs/fix-messages
+        //    - msgFactory  : knows how to build FIX message objects
+        // -----------------------------------------------------------------
+        MessageStoreFactory storeFactory = new FileStoreFactory(settings);
+        LogFactory logFactory = new FileLogFactory(settings);
+        MessageFactory msgFactory = new DefaultMessageFactory();
+
+        return new SocketInitiator(
+                application, storeFactory, settings, logFactory, msgFactory);
     }
 
     /**
