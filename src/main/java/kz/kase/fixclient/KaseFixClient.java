@@ -187,9 +187,10 @@ public class KaseFixClient {
                     case "2" -> doNewOrder(in, orderManager, application, defaults);
                     case "3" -> doCancel(in, orderManager, application);
                     case "4" -> doModify(in, orderManager, application);
-                    case "5" -> listOrders(orderManager);
-                    case "6" -> doLogout(application);
-                    case "7" -> doLogon(configuredSessionId);
+                    case "5" -> doMassCancel(in, orderManager, application, defaults);
+                    case "6" -> listOrders(orderManager);
+                    case "7" -> doLogout(application);
+                    case "8" -> doLogon(configuredSessionId);
                     case "0" -> {
                         log.info("Exit requested by user.");
                         return;
@@ -212,9 +213,10 @@ public class KaseFixClient {
         System.out.println("  2) Place NEW order");
         System.out.println("  3) CANCEL an order");
         System.out.println("  4) MODIFY an order (Cancel/Replace)");
-        System.out.println("  5) List orders sent this session");
-        System.out.println("  6) LOGOUT (disconnect the FIX session)");
-        System.out.println("  7) LOGON  (reconnect the FIX session)");
+        System.out.println("  5) MASS CANCEL orders");
+        System.out.println("  6) List orders sent this session");
+        System.out.println("  7) LOGOUT (disconnect the FIX session)");
+        System.out.println("  8) LOGON  (reconnect the FIX session)");
         System.out.println("  0) Exit the application");
         System.out.println("=================================================================");
     }
@@ -229,7 +231,7 @@ public class KaseFixClient {
     private static void doNewOrder(Scanner in, OrderManager orderManager,
                                    KaseFixApplication application, OrderDefaults defaults) {
         if (!application.isLoggedOn()) {
-            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 7.");
+            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 8.");
             return;
         }
 
@@ -284,7 +286,7 @@ public class KaseFixClient {
     /** Menu option 3: ask which order to cancel and send an OrderCancelRequest. */
     private static void doCancel(Scanner in, OrderManager orderManager, KaseFixApplication application) {
         if (!application.isLoggedOn()) {
-            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 7.");
+            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 8.");
             return;
         }
 
@@ -311,7 +313,7 @@ public class KaseFixClient {
      */
     private static void doModify(Scanner in, OrderManager orderManager, KaseFixApplication application) {
         if (!application.isLoggedOn()) {
-            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 7.");
+            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 8.");
             return;
         }
 
@@ -340,7 +342,86 @@ public class KaseFixClient {
         }
     }
 
-    /** Menu option 4: print every order we sent during this run. */
+    /**
+     * Menu option 5: cancel many orders at once via Order Mass Cancel Request
+     * (MsgType "q"). The user picks one of the KASE-documented scopes; each
+     * maps to a different combination of MassCancelRequestType(530) and
+     * discriminator fields (see OrderManager for details).
+     */
+    private static void doMassCancel(Scanner in, OrderManager orderManager,
+                                     KaseFixApplication application, OrderDefaults defaults) {
+        if (!application.isLoggedOn()) {
+            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 8.");
+            return;
+        }
+
+        System.out.println();
+        System.out.println("---- Mass Cancel scope (KASE spec 4.2.5) ----");
+        System.out.println("  1) ALL my orders");
+        System.out.println("  2) by SECURITY (board + symbol)");
+        System.out.println("  3) BUY orders only");
+        System.out.println("  4) SELL orders only");
+        System.out.println("  5) by ACCOUNT");
+        System.out.println("  6) by USER");
+        System.out.println("  7) by FIRM");
+        System.out.println("--------------------------------------------");
+        System.out.print("Choose mass-cancel scope: ");
+        String scope = in.nextLine().trim();
+
+        String clOrdId = switch (scope) {
+            case "1" -> orderManager.sendMassCancelAll();
+            case "2" -> {
+                String board = askWithDefault(in,
+                        "Board / TradingSessionID (SECBOARD)", defaults.board());
+                System.out.print("Symbol / SECCODE: ");
+                String symbol = in.nextLine().trim();
+                if (board.isEmpty() || symbol.isEmpty()) {
+                    System.out.println(">> Board and Symbol are both REQUIRED for security scope. Aborting.");
+                    yield null;
+                }
+                yield orderManager.sendMassCancelBySecurity(board, symbol);
+            }
+            case "3" -> orderManager.sendMassCancelBySide(true);
+            case "4" -> orderManager.sendMassCancelBySide(false);
+            case "5" -> {
+                String account = askWithDefault(in, "Account (tag 1)", defaults.account());
+                if (account.isEmpty()) {
+                    System.out.println(">> Account is REQUIRED for account scope. Aborting.");
+                    yield null;
+                }
+                yield orderManager.sendMassCancelByAccount(account);
+            }
+            case "6" -> {
+                System.out.print("User id (PartyID): ");
+                String userId = in.nextLine().trim();
+                if (userId.isEmpty()) {
+                    System.out.println(">> User id is REQUIRED. Aborting.");
+                    yield null;
+                }
+                yield orderManager.sendMassCancelByParty(userId, false);
+            }
+            case "7" -> {
+                System.out.print("Firm id (PartyID): ");
+                String firmId = in.nextLine().trim();
+                if (firmId.isEmpty()) {
+                    System.out.println(">> Firm id is REQUIRED. Aborting.");
+                    yield null;
+                }
+                yield orderManager.sendMassCancelByParty(firmId, true);
+            }
+            default -> {
+                System.out.println("Unknown scope: '" + scope + "'");
+                yield null;
+            }
+        };
+
+        if (clOrdId != null) {
+            System.out.println(">> Mass cancel request sent (ClOrdID = " + clOrdId + ").");
+            System.out.println(">> Watch the log for the Order Mass Cancel Report (MsgType r).");
+        }
+    }
+
+    /** Menu option 6: print every order we sent during this run. */
     private static void listOrders(OrderManager orderManager) {
         Map<String, OrderManager.SentOrder> orders = orderManager.getSentOrders();
         if (orders.isEmpty()) {
@@ -357,7 +438,7 @@ public class KaseFixClient {
         System.out.println("----------------------------------");
     }
 
-    /** Menu option 5: politely log out of the FIX session. */
+    /** Menu option 7: politely log out of the FIX session. */
     private static void doLogout(KaseFixApplication application) {
         SessionID sessionId = application.getActiveSessionId();
         if (sessionId == null) {
@@ -371,7 +452,7 @@ public class KaseFixClient {
         }
     }
 
-    /** Menu option 6: ask the engine to log on again after a logout. */
+    /** Menu option 8: ask the engine to log on again after a logout. */
     private static void doLogon(SessionID configuredSessionId) {
         Session session = Session.lookupSession(configuredSessionId);
         if (session == null) {
@@ -383,5 +464,3 @@ public class KaseFixClient {
         System.out.println(">> Logon requested. Watch the log for the LOGON confirmation.");
     }
 }
-
-ORD-1781685463113

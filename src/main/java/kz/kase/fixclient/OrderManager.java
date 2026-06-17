@@ -12,9 +12,13 @@ import org.slf4j.LoggerFactory;
 
 import quickfix.field.Account;
 import quickfix.field.ClOrdID;
+import quickfix.field.MassCancelRequestType;
 import quickfix.field.OrdType;
 import quickfix.field.OrderQty;
 import quickfix.field.OrigClOrdID;
+import quickfix.field.PartyID;
+import quickfix.field.PartyIDSource;
+import quickfix.field.PartyRole;
 import quickfix.field.Price;
 import quickfix.field.Side;
 import quickfix.field.Symbol;
@@ -23,6 +27,7 @@ import quickfix.field.TransactTime;
 import quickfix.fix44.NewOrderSingle;
 import quickfix.fix44.OrderCancelReplaceRequest;
 import quickfix.fix44.OrderCancelRequest;
+import quickfix.fix44.OrderMassCancelRequest;
 
 /**
  * OrderManager
@@ -30,8 +35,10 @@ import quickfix.fix44.OrderCancelRequest;
  * This class knows how to BUILD and SEND the two business messages we care
  * about:
  *
- *   1. NewOrderSingle     (FIX MsgType "D") -> place a brand new order
- *   2. OrderCancelRequest (FIX MsgType "F") -> cancel an order we placed
+ *   1. NewOrderSingle              (FIX MsgType "D") -> place a brand new order
+ *   2. OrderCancelRequest          (FIX MsgType "F") -> cancel an order we placed
+ *   3. OrderCancelReplaceRequest   (FIX MsgType "G") -> modify price/qty
+ *   4. OrderMassCancelRequest      (FIX MsgType "q") -> cancel many orders at once
  *
  * ===========================================================================
  *  IMPORTANT - KASE / MOEX "MFIX" SPECIFICS (see spec section 4.2.2):
@@ -341,6 +348,112 @@ public class OrderManager {
             return replaceClOrdId;
         }
         log.error("Cancel/Replace request was NOT sent (are we logged on?).");
+        return null;
+    }
+
+    // =====================================================================
+    //  ORDER MASS CANCEL REQUEST (MsgType "q") - KASE spec section 4.2.5
+    // =====================================================================
+    //
+    // ClOrdID(11) and TransactTime(60) are ALWAYS mandatory.
+    // The scope is defined by MassCancelRequestType(530) plus a few
+    // discriminator fields. KASE uses ONLY these combinations:
+    //
+    //   530='1' + TradingSessionID(336) + Symbol(55)  -> by instrument
+    //   530='7' + Side(54)='1' or '2'                 -> buy / sell only
+    //   530='7' + Account(1)                          -> by trading account
+    //   530='7' + NoPartyIDs group                    -> by user or firm
+    //   530='7' (nothing else)                        -> ALL orders
+    //
+    // Each public method below maps 1:1 to one KASE bullet so the caller
+    // cannot accidentally mix the wrong fields.
+
+    /** Cancel ALL orders: MassCancelRequestType(530) = '7' (no other fields). */
+    public String sendMassCancelAll() {
+        String clOrdId = nextClOrdId();
+        OrderMassCancelRequest req = newMassCancel(clOrdId, MassCancelRequestType.CANCEL_ALL_ORDERS);
+        return dispatch(req, clOrdId, "MASS CANCEL: ALL orders");
+    }
+
+    /**
+     * Cancel orders for a specific instrument: 530='1' + board + symbol.
+     * KASE requires BOTH TradingSessionID(336) and Symbol(55) together.
+     */
+    public String sendMassCancelBySecurity(String board, String symbol) {
+        String clOrdId = nextClOrdId();
+        OrderMassCancelRequest req = newMassCancel(clOrdId, MassCancelRequestType.CANCEL_ORDERS_FOR_A_SECURITY);
+        req.set(new TradingSessionID(board));
+        req.set(new Symbol(symbol));
+        return dispatch(req, clOrdId,
+                "MASS CANCEL: by SECURITY board='" + board + "' symbol='" + symbol + "'");
+    }
+
+    /** Cancel BUY or SELL orders only: 530='7' + Side(54) = '1' or '2'. */
+    public String sendMassCancelBySide(boolean buy) {
+        String clOrdId = nextClOrdId();
+        OrderMassCancelRequest req = newMassCancel(clOrdId, MassCancelRequestType.CANCEL_ALL_ORDERS);
+        req.set(new Side(buy ? Side.BUY : Side.SELL));
+        return dispatch(req, clOrdId,
+                "MASS CANCEL: " + (buy ? "BUY" : "SELL") + " orders only");
+    }
+
+    /** Cancel orders for a specific trading account: 530='7' + Account(1). */
+    public String sendMassCancelByAccount(String account) {
+        String clOrdId = nextClOrdId();
+        OrderMassCancelRequest req = newMassCancel(clOrdId, MassCancelRequestType.CANCEL_ALL_ORDERS);
+        // The generated FIX44 class does not expose a typed set(Account) here,
+        // so we set tag 1 generically.
+        req.setString(Account.FIELD, account);
+        return dispatch(req, clOrdId,
+                "MASS CANCEL: by ACCOUNT '" + account + "'");
+    }
+
+    /**
+     * Cancel orders of a specific user or firm: 530='7' + NoPartyIDs(453)=1 group.
+     * KASE requires PartyIDSource(447)='D' and PartyRole(452)='12' (user) or '1' (firm).
+     *
+     * @param partyId the user or firm identifier (PartyID, tag 448)
+     * @param firm    true = firm (role 1), false = user (role 12)
+     */
+    public String sendMassCancelByParty(String partyId, boolean firm) {
+        String clOrdId = nextClOrdId();
+        OrderMassCancelRequest req = newMassCancel(clOrdId, MassCancelRequestType.CANCEL_ALL_ORDERS);
+        // This FIX44 generated class may not expose NoPartyIDs as a typed inner
+        // class, so we add the party group generically by tag sequence.
+        quickfix.Group party = new quickfix.Group(453, PartyID.FIELD,
+                new int[] { PartyID.FIELD, PartyIDSource.FIELD, PartyRole.FIELD, 0 });
+        party.setString(PartyID.FIELD, partyId);
+        party.setChar(PartyIDSource.FIELD, 'D');
+        party.setInt(PartyRole.FIELD, firm ? PartyRole.EXECUTING_FIRM : PartyRole.EXECUTING_TRADER);
+        req.addGroup(party);
+
+        return dispatch(req, clOrdId,
+                "MASS CANCEL: by " + (firm ? "FIRM" : "USER") + " id='" + partyId + "'");
+    }
+
+    /**
+     * Build the common base of every Order Mass Cancel Request using the provided
+     * ClOrdID, the given MassCancelRequestType, and UTC TransactTime
+     * (all mandatory for KASE).
+     */
+    private OrderMassCancelRequest newMassCancel(String clOrdId, char requestType) {
+        return new OrderMassCancelRequest(
+                new ClOrdID(clOrdId),
+                new MassCancelRequestType(requestType),
+                new TransactTime(LocalDateTime.now(ZoneOffset.UTC)));
+    }
+
+    /**
+     * Log, send, and return the ClOrdID. Mass cancel is fire-and-forget: we do
+     * NOT add anything to sentOrders (it cancels existing orders; the report
+     * and any ExecutionReports tell us the outcome).
+     */
+    private String dispatch(OrderMassCancelRequest req, String clOrdId, String description) {
+        log.info("{} (ClOrdID={})", description, clOrdId);
+        if (application.send(req)) {
+            return clOrdId;
+        }
+        log.error("Mass cancel request was NOT sent (are we logged on?).");
         return null;
     }
 

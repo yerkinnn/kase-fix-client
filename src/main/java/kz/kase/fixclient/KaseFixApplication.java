@@ -27,6 +27,9 @@ import quickfix.field.HeartBtInt;
 import quickfix.field.LastPx;
 import quickfix.field.LastQty;
 import quickfix.field.LeavesQty;
+import quickfix.field.MassCancelRejectReason;
+import quickfix.field.MassCancelRequestType;
+import quickfix.field.MassCancelResponse;
 import quickfix.field.MsgSeqNum;
 import quickfix.field.MsgType;
 import quickfix.field.OrdStatus;
@@ -35,6 +38,7 @@ import quickfix.field.OrderID;
 import quickfix.field.OrderQty;
 import quickfix.field.OrigClOrdID;
 import quickfix.field.Password;
+import quickfix.field.PartyID;
 import quickfix.field.Price;
 import quickfix.field.RefMsgType;
 import quickfix.field.RefSeqNum;
@@ -44,6 +48,7 @@ import quickfix.field.SessionRejectReason;
 import quickfix.field.Side;
 import quickfix.field.Symbol;
 import quickfix.field.Text;
+import quickfix.field.TotalAffectedOrders;
 import quickfix.field.TradSesStatus;
 import quickfix.field.TradingSessionID;
 import quickfix.field.Username;
@@ -234,6 +239,7 @@ public class KaseFixApplication implements Application {
         switch (msgType) {
             case MsgType.EXECUTION_REPORT -> handleExecutionReport(message);
             case MsgType.ORDER_CANCEL_REJECT -> handleCancelReject(message);
+            case MsgType.ORDER_MASS_CANCEL_REPORT -> handleMassCancelReport(message);
             default -> log.info("Received business message of type '{}' (no special handling).", msgType);
         }
     }
@@ -282,6 +288,34 @@ public class KaseFixApplication implements Application {
         }
         if (m.isSetField(Text.FIELD)) {
             log.warn("   Text from exchange: {}", m.getString(Text.FIELD));
+        }
+    }
+
+    /** Explain the outcome of an Order Mass Cancel Request (MsgType 'q'). */
+    private void handleMassCancelReport(Message m) throws FieldNotFound {
+        String clOrdId = m.isSetField(ClOrdID.FIELD) ? m.getString(ClOrdID.FIELD) : "(none)";
+        String response = m.isSetField(MassCancelResponse.FIELD)
+                ? massCancelResponseName(m.getChar(MassCancelResponse.FIELD))
+                : "(none)";
+
+        log.info("ORDER MASS CANCEL REPORT | ClOrdID={} | response={}", clOrdId, response);
+
+        if (m.isSetField(MassCancelRejectReason.FIELD)) {
+            int reason = m.getInt(MassCancelRejectReason.FIELD);
+            log.warn("   Reject reason (tag 532) = {} ({})",
+                    reason, massCancelRejectReasonName(reason));
+        }
+        if (m.isSetField(TotalAffectedOrders.FIELD)) {
+            log.info("   Total affected orders={}", m.getInt(TotalAffectedOrders.FIELD));
+        }
+        if (m.isSetField(Account.FIELD)) {
+            log.info("   Account={}", m.getString(Account.FIELD));
+        }
+        if (m.isSetField(TradingSessionID.FIELD)) {
+            log.info("   TradingSessionID={}", m.getString(TradingSessionID.FIELD));
+        }
+        if (m.isSetField(Text.FIELD)) {
+            log.info("   Text from exchange: {}", m.getString(Text.FIELD));
         }
     }
 
@@ -423,6 +457,29 @@ public class KaseFixApplication implements Application {
                 add(j, m, Price.FIELD, "price");
                 if (m.isSetField(OrdType.FIELD)) j.add(ordTypeName(m.getChar(OrdType.FIELD)));
             }
+            case MsgType.ORDER_MASS_CANCEL_REQUEST -> {
+                add(j, m, ClOrdID.FIELD, "ClOrdID");
+                if (m.isSetField(MassCancelRequestType.FIELD)) {
+                    j.add("type=" + massCancelTypeName(m.getChar(MassCancelRequestType.FIELD)));
+                }
+                if (m.isSetField(Side.FIELD)) j.add(sideName(m.getChar(Side.FIELD)));
+                add(j, m, Symbol.FIELD, "symbol");
+                add(j, m, TradingSessionID.FIELD, "board");
+                add(j, m, Account.FIELD, "account");
+                add(j, m, PartyID.FIELD, "partyId");
+            }
+            case MsgType.ORDER_MASS_CANCEL_REPORT -> {
+                add(j, m, ClOrdID.FIELD, "ClOrdID");
+                if (m.isSetField(MassCancelResponse.FIELD)) {
+                    j.add("response=" + massCancelResponseName(m.getChar(MassCancelResponse.FIELD)));
+                }
+                if (m.isSetField(MassCancelRejectReason.FIELD)) {
+                    int reason = m.getInt(MassCancelRejectReason.FIELD);
+                    j.add("rejectReason=" + reason + " (" + massCancelRejectReasonName(reason) + ")");
+                }
+                add(j, m, TotalAffectedOrders.FIELD, "affected");
+                add(j, m, Text.FIELD, "text");
+            }
             case MsgType.EXECUTION_REPORT -> {
                 add(j, m, ClOrdID.FIELD, "ClOrdID");
                 if (m.isSetField(OrdStatus.FIELD)) j.add("status=" + describeOrdStatus(m.getChar(OrdStatus.FIELD)));
@@ -469,6 +526,51 @@ public class KaseFixApplication implements Application {
             case OrdType.MARKET -> "MARKET";
             case OrdType.LIMIT -> "LIMIT";
             default -> "ordType='" + t + "'";
+        };
+    }
+
+    private static String massCancelTypeName(char t) {
+        return switch (t) {
+            case MassCancelRequestType.CANCEL_ORDERS_FOR_A_SECURITY -> "BY SECURITY";
+            case MassCancelRequestType.CANCEL_ALL_ORDERS -> "ALL (KASE-filtered)";
+            default -> "type='" + t + "'";
+        };
+    }
+
+    private static String massCancelResponseName(char r) {
+        return switch (r) {
+            case '0' -> "REJECTED";
+            case '1' -> "ACCEPTED: SECURITY";
+            case '2' -> "ACCEPTED: UNDERLYING";
+            case '3' -> "ACCEPTED: PRODUCT";
+            case '4' -> "ACCEPTED: CFI";
+            case '5' -> "ACCEPTED: SECURITY TYPE";
+            case '6' -> "ACCEPTED: TRADING SESSION";
+            case '7' -> "ACCEPTED: ALL";
+            case '8' -> "ACCEPTED: MARKET";
+            case '9' -> "ACCEPTED: MARKET SEGMENT";
+            case 'A' -> "ACCEPTED: SECURITY GROUP";
+            case 'B' -> "ACCEPTED: ISSUER";
+            case 'C' -> "ACCEPTED: UNDERLYING ISSUER";
+            default -> "response='" + r + "'";
+        };
+    }
+
+    private static String massCancelRejectReasonName(int reason) {
+        return switch (reason) {
+            case MassCancelRejectReason.MASS_CANCEL_NOT_SUPPORTED -> "MASS CANCEL NOT SUPPORTED";
+            case MassCancelRejectReason.INVALID_OR_UNKNOWN_SECURITY -> "INVALID OR UNKNOWN SECURITY";
+            case 2 -> "INVALID OR UNKNOWN UNDERLYING";
+            case MassCancelRejectReason.INVALID_OR_UNKNOWN_PRODUCT -> "INVALID OR UNKNOWN PRODUCT";
+            case MassCancelRejectReason.INVALID_OR_UNKNOWN_CFICODE -> "INVALID OR UNKNOWN CFI";
+            case MassCancelRejectReason.INVALID_OR_UNKNOWN_SECURITYTYPE -> "INVALID OR UNKNOWN SECURITY TYPE";
+            case 6 -> "INVALID OR UNKNOWN TRADING SESSION";
+            case MassCancelRejectReason.INVALID_OR_UNKNOWN_MARKET -> "INVALID OR UNKNOWN MARKET";
+            case 8 -> "INVALID OR UNKNOWN MARKET SEGMENT";
+            case MassCancelRejectReason.INVALID_OR_UNKNOWN_SECURITY_GROUP -> "INVALID OR UNKNOWN SECURITY GROUP";
+            case 10 -> "INVALID OR UNKNOWN ISSUER";
+            case MassCancelRejectReason.INVALID_OR_UNKNOWN_ISSUER_OF_UNDERLYING_SECURITY -> "INVALID OR UNKNOWN UNDERLYING ISSUER";
+            default -> "reason=" + reason;
         };
     }
 
