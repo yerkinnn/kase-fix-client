@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import org.quickfixj.CharsetSupport;
 
+import quickfix.ConfigError;
 import quickfix.DefaultMessageFactory;
 import quickfix.FileLogFactory;
 import quickfix.FileStoreFactory;
@@ -185,9 +186,10 @@ public class KaseFixClient {
                     case "1" -> showStatus(application, orderManager);
                     case "2" -> doNewOrder(in, orderManager, application, defaults);
                     case "3" -> doCancel(in, orderManager, application);
-                    case "4" -> listOrders(orderManager);
-                    case "5" -> doLogout(application);
-                    case "6" -> doLogon(configuredSessionId);
+                    case "4" -> doModify(in, orderManager, application);
+                    case "5" -> listOrders(orderManager);
+                    case "6" -> doLogout(application);
+                    case "7" -> doLogon(configuredSessionId);
                     case "0" -> {
                         log.info("Exit requested by user.");
                         return;
@@ -209,9 +211,10 @@ public class KaseFixClient {
         System.out.println("  1) Show connection status");
         System.out.println("  2) Place NEW order");
         System.out.println("  3) CANCEL an order");
-        System.out.println("  4) List orders sent this session");
-        System.out.println("  5) LOGOUT (disconnect the FIX session)");
-        System.out.println("  6) LOGON  (reconnect the FIX session)");
+        System.out.println("  4) MODIFY an order (Cancel/Replace)");
+        System.out.println("  5) List orders sent this session");
+        System.out.println("  6) LOGOUT (disconnect the FIX session)");
+        System.out.println("  7) LOGON  (reconnect the FIX session)");
         System.out.println("  0) Exit the application");
         System.out.println("=================================================================");
     }
@@ -226,7 +229,7 @@ public class KaseFixClient {
     private static void doNewOrder(Scanner in, OrderManager orderManager,
                                    KaseFixApplication application, OrderDefaults defaults) {
         if (!application.isLoggedOn()) {
-            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 6.");
+            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 7.");
             return;
         }
 
@@ -281,7 +284,7 @@ public class KaseFixClient {
     /** Menu option 3: ask which order to cancel and send an OrderCancelRequest. */
     private static void doCancel(Scanner in, OrderManager orderManager, KaseFixApplication application) {
         if (!application.isLoggedOn()) {
-            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 6.");
+            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 7.");
             return;
         }
 
@@ -298,6 +301,42 @@ public class KaseFixClient {
         String cancelId = orderManager.sendCancel(clOrdId);
         if (cancelId != null) {
             System.out.println(">> Cancel request sent (cancel ClOrdID = " + cancelId + ").");
+        }
+    }
+
+    /**
+     * Menu option 4: modify a live order via Cancel/Replace (MsgType "G").
+     * The user can change the quantity and/or the price; pressing Enter at a
+     * prompt keeps that order's original value.
+     */
+    private static void doModify(Scanner in, OrderManager orderManager, KaseFixApplication application) {
+        if (!application.isLoggedOn()) {
+            System.out.println(">> You are not logged on yet. Wait for LOGON or use option 7.");
+            return;
+        }
+
+        Map<String, OrderManager.SentOrder> orders = orderManager.getSentOrders();
+        if (orders.isEmpty()) {
+            System.out.println(">> No orders to modify (none sent during this run).");
+            return;
+        }
+
+        listOrders(orderManager);
+        System.out.print("Enter the ClOrdID of the order to modify: ");
+        String clOrdId = in.nextLine().trim();
+
+        // Both prompts accept an empty line, meaning "keep the original value".
+        System.out.print("New quantity (lots) - leave EMPTY to keep current: ");
+        String qtyInput = in.nextLine().trim();
+        BigDecimal newQuantity = qtyInput.isEmpty() ? null : new BigDecimal(qtyInput);
+
+        System.out.print("New limit price - leave EMPTY to keep current: ");
+        String priceInput = in.nextLine().trim();
+        BigDecimal newPrice = priceInput.isEmpty() ? null : new BigDecimal(priceInput);
+
+        String replaceId = orderManager.sendCancelReplace(clOrdId, newQuantity, newPrice);
+        if (replaceId != null) {
+            System.out.println(">> Modify (Cancel/Replace) sent. New ClOrdID = " + replaceId + ".");
         }
     }
 
@@ -344,3 +383,5 @@ public class KaseFixClient {
         System.out.println(">> Logon requested. Watch the log for the LOGON confirmation.");
     }
 }
+
+ORD-1781685463113

@@ -414,6 +414,15 @@ public class KaseFixApplication implements Application {
                 add(j, m, ClOrdID.FIELD, "ClOrdID");
                 add(j, m, Symbol.FIELD, "symbol");
             }
+            case MsgType.ORDER_CANCEL_REPLACE_REQUEST -> {
+                add(j, m, OrigClOrdID.FIELD, "OrigClOrdID");
+                add(j, m, ClOrdID.FIELD, "ClOrdID");
+                if (m.isSetField(Side.FIELD)) j.add(sideName(m.getChar(Side.FIELD)));
+                add(j, m, OrderQty.FIELD, "qty");
+                add(j, m, Symbol.FIELD, "symbol");
+                add(j, m, Price.FIELD, "price");
+                if (m.isSetField(OrdType.FIELD)) j.add(ordTypeName(m.getChar(OrdType.FIELD)));
+            }
             case MsgType.EXECUTION_REPORT -> {
                 add(j, m, ClOrdID.FIELD, "ClOrdID");
                 if (m.isSetField(OrdStatus.FIELD)) j.add("status=" + describeOrdStatus(m.getChar(OrdStatus.FIELD)));
@@ -470,8 +479,10 @@ public class KaseFixApplication implements Application {
             case OrdStatus.FILLED -> "FILLED";
             case OrdStatus.CANCELED -> "CANCELLED";
             case OrdStatus.REJECTED -> "REJECTED";
+            case OrdStatus.REPLACED -> "REPLACED";
             case OrdStatus.PENDING_NEW -> "PENDING NEW";
             case OrdStatus.PENDING_CANCEL -> "PENDING CANCEL";
+            case OrdStatus.PENDING_REPLACE -> "PENDING REPLACE";
             default -> "status '" + s + "'";
         };
     }
@@ -481,9 +492,11 @@ public class KaseFixApplication implements Application {
             case ExecType.NEW -> "NEW";
             case ExecType.TRADE -> "TRADE (fill)";
             case ExecType.CANCELED -> "CANCELLED";
+            case ExecType.REPLACED -> "REPLACED";
             case ExecType.REJECTED -> "REJECTED";
             case ExecType.PENDING_NEW -> "PENDING NEW";
             case ExecType.PENDING_CANCEL -> "PENDING CANCEL";
+            case ExecType.PENDING_REPLACE -> "PENDING REPLACE";
             default -> "execType '" + s + "'";
         };
     }

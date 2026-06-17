@@ -21,6 +21,7 @@ import quickfix.field.Symbol;
 import quickfix.field.TradingSessionID;
 import quickfix.field.TransactTime;
 import quickfix.fix44.NewOrderSingle;
+import quickfix.fix44.OrderCancelReplaceRequest;
 import quickfix.fix44.OrderCancelRequest;
 
 /**
@@ -250,6 +251,96 @@ public class OrderManager {
             return cancelClOrdId;
         }
         log.error("Cancel request was NOT sent (are we logged on?).");
+        return null;
+    }
+
+    /**
+     * Build and send an ORDER CANCEL/REPLACE REQUEST (MsgType "G") to MODIFY an
+     * order we previously sent. This is how you change the PRICE and/or QUANTITY
+     * of a live order without first cancelling it yourself - KASE atomically
+     * cancels the old order and replaces it with the amended one.
+     *
+     * <p>Per KASE spec section 4.2.4, a Cancel/Replace mirrors the New Order (D)
+     * message (same mandatory fields: Account, the TradingSessionID group,
+     * Symbol, Side, TransactTime, OrdType, OrderQty, Price) and additionally
+     * references the original order via OrigClOrdID (41). As with a plain cancel,
+     * we also include the exchange OrderID (37) when KASE has given it to us,
+     * because KASE treats OrderID as the authoritative reference.
+     *
+     * <p>Anything passed as {@code null} keeps the ORIGINAL order's value, so the
+     * caller can change just the price, just the quantity, or both.
+     *
+     * @param origClOrdId the ClOrdID of the order to modify (from a prior send).
+     * @param newQuantity the new quantity in lots, or null to keep the original.
+     * @param newPrice    the new limit price, or null to keep the original
+     *                    (if the original was a MARKET order it stays MARKET).
+     * @return the new ClOrdID assigned to the replace request, or null on failure.
+     */
+    public String sendCancelReplace(String origClOrdId, BigDecimal newQuantity, BigDecimal newPrice) {
+        SentOrder original = sentOrders.get(origClOrdId);
+        if (original == null) {
+            log.warn("Cannot modify: no order found with ClOrdID '{}'. " +
+                    "(This client only remembers orders sent during THIS run.)", origClOrdId);
+            return null;
+        }
+
+        // Fall back to the original values for anything the caller left blank.
+        BigDecimal quantity = (newQuantity != null) ? newQuantity : original.quantity();
+        BigDecimal price    = (newPrice != null) ? newPrice : original.price();
+
+        // OrdType follows the price: a price means LIMIT, no price means MARKET.
+        char ordType = (price != null) ? OrdType.LIMIT : OrdType.MARKET;
+
+        // The replace request needs its OWN new unique ClOrdID.
+        String replaceClOrdId = nextClOrdId();
+
+        // Build the message with explicit setters (clearer than relying on the
+        // generated constructor's field order, and easy to map to the spec).
+        OrderCancelReplaceRequest replace = new OrderCancelReplaceRequest();
+        replace.set(new OrigClOrdID(original.clOrdId())); // which order to amend
+        replace.set(new ClOrdID(replaceClOrdId));         // id of THIS replace
+        replace.set(new Side(original.side()));           // side cannot change
+        replace.set(new TransactTime(LocalDateTime.now(ZoneOffset.UTC)));
+        replace.set(new OrdType(ordType));
+
+        // Account (tag 1) - same trading account as the original.
+        replace.set(new Account(original.account()));
+
+        // TradingSessionID group (386 + 336) - same board as the original.
+        OrderCancelReplaceRequest.NoTradingSessions tradingSession =
+                new OrderCancelReplaceRequest.NoTradingSessions();
+        tradingSession.set(new TradingSessionID(original.board()));
+        replace.addGroup(tradingSession);
+
+        // Instrument + the NEW quantity.
+        replace.set(new Symbol(original.symbol()));
+        replace.set(new OrderQty(quantity.doubleValue()));
+
+        // Price: LIMIT carries the real (possibly new) price; MARKET MUST send 0.
+        replace.set(new Price(price != null ? price.doubleValue() : 0));
+
+        // Reference the exchange order number when we know it.
+        if (original.exchangeOrderId() != null && !original.exchangeOrderId().isBlank()) {
+            replace.set(new quickfix.field.OrderID(original.exchangeOrderId()));
+        }
+
+        log.info("Modifying order ClOrdID={} (exchangeOrderID={}, symbol={}): qty {} -> {}, price {} -> {}. Replace ClOrdID={}",
+                origClOrdId, original.exchangeOrderId(), original.symbol(),
+                original.quantity(), quantity,
+                original.price() != null ? original.price() : "MARKET",
+                price != null ? price : "MARKET",
+                replaceClOrdId);
+
+        boolean sent = application.send(replace);
+        if (sent) {
+            // Track the amended order under its new ClOrdID so it can itself be
+            // cancelled or modified again later.
+            sentOrders.put(replaceClOrdId, new SentOrder(
+                    replaceClOrdId, original.symbol(), original.board(),
+                    original.account(), original.side(), quantity, price));
+            return replaceClOrdId;
+        }
+        log.error("Cancel/Replace request was NOT sent (are we logged on?).");
         return null;
     }
 
